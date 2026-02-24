@@ -1,0 +1,11 @@
+# Will be updated
+
+# Docker ignore file to exclude unnecessary files and folders from the Docker build context
+# Ignore Python virtual environment and cache files
+.venv/
+__pycache__/
+# Ignore environment variable files and compiled Python files
+.env/
+*.pyc
+# Ignore dataset folder to reduce build context size
+data/

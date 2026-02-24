@@ -1,0 +1,12 @@
+numpy
+pandas
+torch
+torchvision
+transformers
+librosa
+soundfile
+opencv-python
+fer==22.4.0
+setuptools
+scikit-learn
+joblib

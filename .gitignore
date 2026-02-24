@@ -1,0 +1,8 @@
+# Python virtual environment and python cache
+.venv/
+__pycache__/
+.env/
+*.pyc
+
+# Ignore dataset folder for sake of space
+data/MELD.Raw/
