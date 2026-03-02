@@ -37,4 +37,10 @@ class EmotionPADModel(nn.Module):
         # Fuse and regress
         fused_embedding = self.fusion(embeddings)
         p, a, d = self.pad_regressor(fused_embedding)
+
+        # <-- ensure PAD values stay in [-1,1]
+        p = torch.tanh(p)
+        a = torch.tanh(a)
+        d = torch.tanh(d)
+
         return p, a, d

@@ -20,16 +20,19 @@ class PADRegressors(nn.Module):
             self.pleasure_head = nn.Sequential(
                 nn.Linear(d_model, hidden_dim),
                 nn.GELU(),
+                nn.Dropout(0.1),
                 nn.Linear(hidden_dim, 1)
             )
             self.arousal_head = nn.Sequential(
                 nn.Linear(d_model, hidden_dim),
                 nn.GELU(),
+                nn.Dropout(0.1),
                 nn.Linear(hidden_dim, 1)
             )
             self.dominance_head = nn.Sequential(
                 nn.Linear(d_model, hidden_dim),
                 nn.GELU(),
+                nn.Dropout(0.1),
                 nn.Linear(hidden_dim, 1)
             )
 

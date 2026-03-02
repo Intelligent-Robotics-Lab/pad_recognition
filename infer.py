@@ -1,3 +1,5 @@
+# For testing of weights and training, will be updated to include accuracy metrics
+
 import torch
 from torch.utils.data import DataLoader
 from utils.helpers import MELDMultimodalDataset
@@ -10,11 +12,11 @@ from features.video_features import extract_video_features
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load test dataset
-test_dataset = MELDMultimodalDataset(root_dir=r"C:\Users\carte\emotion-recognition-hri\data\MELD.Raw", split="test")
+test_dataset = MELDMultimodalDataset(root_dir=r"/home/carter/pad_recognition/data/MELD.Raw", split="test")
 test_loader = DataLoader(test_dataset, batch_size=2, shuffle=False)
 
 # Initialize model
-model = EmotionPADModel(text_input_dim=776, audio_input_dim=63, video_input_dim=1280, d_model=512).to(device)
+model = EmotionPADModel(text_input_dim=776, audio_input_dim=126, video_input_dim=42, d_model=512).to(device)
 
 # Load the trained weights
 model.load_state_dict(torch.load("saved_models/emotionpad_trained.pth", map_location=device))
@@ -22,6 +24,7 @@ model.eval()  # Set the model to eval mode for inference, won't update weights
 
 # Iterate over test batches
 for text_batch, audio_paths, video_paths, pad_targets in test_loader:
+    print("pad_targets (raw batch):", pad_targets)
     # Convert raw features to embeddings
     text_embs = torch.stack([
         torch.tensor(prepare_text_features(t), dtype=torch.float32, device=device).detach().clone()
@@ -37,8 +40,8 @@ for text_batch, audio_paths, video_paths, pad_targets in test_loader:
     ])
 
     # Convert target PAD values to tensor
-    pad_targets_tensor = torch.stack([torch.tensor(t, dtype=torch.float32) for t in pad_targets]).to(device)
-
+    # FIXED: keep original tensor, move to device and ensure float32
+    pad_targets_tensor = pad_targets.to(device=device, dtype=torch.float32)  # shape: [batch, 3]
     # Forward pass
     with torch.no_grad(): # no need to compute gradients during inference
         pleasure, arousal, dominance = model(text_embs, audio_embs, video_embs)
@@ -47,6 +50,9 @@ for text_batch, audio_paths, video_paths, pad_targets in test_loader:
     # Print predictions
     for i in range(len(text_batch)):
         pred_p, pred_a, pred_d = preds[i].tolist()  # safer, gets values as floats
+        # Debug lines
+        print("pad_targets_tensor.shape:", pad_targets_tensor.shape)
+        print("pad_targets_tensor[i]:", pad_targets_tensor[i])
         target_p, target_a, target_d = pad_targets_tensor[i].tolist()  # assuming pad_targets_tensor[i] is list/tuple
 
         print(f"Sample {i+1}:")

@@ -1,3 +1,5 @@
+# Would like to include LSTM models to gather trends across time by stacking emotion vectors
+
 import librosa
 import numpy as np
 import soundfile as sf
@@ -30,14 +32,35 @@ def extract_audio_features(audio_path, target_sr=16000, max_seconds=5):
     pitch = librosa.yin(y=y, fmin=50, fmax=300, frame_length=hop_length)
     spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)
 
-    # Stack all features along rows (time frames) and then take mean across time to get fixed-size vector
+    # Mean + std deviation pooling
     features = np.concatenate([
         mfcc.mean(axis=1), 
+        mfcc.std(axis=1),
+
         mfcc_delta.mean(axis=1), 
+        mfcc_delta.std(axis=1),
+
         mfcc_delta2.mean(axis=1), 
+        mfcc_delta2.std(axis=1),
+
         energy.mean(axis=1),
+        energy.std(axis=1),
+
         [pitch.mean()],
-        [spectral_centroid.mean()]
+        [pitch.std()],
+
+        spectral_centroid.mean(axis=1),
+        spectral_centroid.std(axis=1),
     ])
+
+    # # Stack all features along rows (time frames) and then take mean across time to get fixed-size vector
+    # features = np.concatenate([
+    #     mfcc.mean(axis=1), 
+    #     mfcc_delta.mean(axis=1), 
+    #     mfcc_delta2.mean(axis=1), 
+    #     energy.mean(axis=1),
+    #     [pitch.mean()],
+    #     [spectral_centroid.mean()]
+    # ])
     
-    return features
+    return features.astype(np.float32)

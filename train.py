@@ -13,8 +13,8 @@ from features.video_features import extract_video_features
 
 # Configurations
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-root_dir = r"C:\Users\carte\emotion-recognition-hri\data\MELD.Raw"
-batch_size = 3
+root_dir = r"/home/carter/pad_recognition/data/MELD.Raw"
+batch_size = 64
 num_epochs = 1  # mini training
 d_model = 512   # embedding dimension
 
@@ -23,7 +23,7 @@ dataset = MELDMultimodalDataset(root_dir=root_dir, split="train")
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 # Initailize model and loss optimizer
-model = EmotionPADModel(text_input_dim=776, audio_input_dim=63, video_input_dim=1280, d_model=d_model).to(device)
+model = EmotionPADModel(text_input_dim=776, audio_input_dim=126, video_input_dim=42, d_model=d_model).to(device)
 model.train()
 
 criterion = nn.MSELoss()
@@ -34,58 +34,63 @@ for epoch in range(num_epochs):
     print(f"\nEpoch {epoch+1}/{num_epochs}")
 
     for text_batch, audio_paths, video_paths, pad_targets in dataloader:
-        # Prep embeddings lists
-        text_embs_list = []
-        audio_embs_list = []
-        video_embs_list = []
+        # Prep raw features tensors
+        text_features_list = []
+        audio_features_list = []
+        video_features_list = []
 
         # Convert the raw text/audio/video inputs to embeddings, catching any errors and using zero vectors as fallbacks
         for i in range(len(text_batch)):
             # Text embeddings
             try:
-                text_emb = torch.tensor(prepare_text_features(text_batch[i]), dtype=torch.float32, device=device).detach().clone()  # ensure no gradient tracking for raw features
+                feat = prepare_text_features(text_batch[i])
+                text_features_list.append(torch.tensor(feat, dtype=torch.float32, device=device))
             except Exception as e:
                 print(f"[Warning] Text feature error at sample {i}: {e}")
-                text_emb = torch.zeros(d_model, device=device)  # fallback
-            text_embs_list.append(text_emb)
+                text_features_list.append(torch.zeros(776, device=device))  # assuming 776-dim text features
 
             # Audio embeddings
             try:
-                audio_emb = torch.tensor(extract_audio_features(audio_paths[i]), dtype=torch.float32, device=device).detach().clone() 
+                feat = extract_audio_features(audio_paths[i])
+                audio_features_list.append(torch.tensor(feat, dtype=torch.float32, device=device))
             except Exception as e:
                 print(f"[Warning] Audio feature error at sample {i}: {e}")
-                audio_emb = torch.zeros(d_model, device=device)
-            audio_embs_list.append(audio_emb)
+                audio_features_list.append(torch.zeros(126, device=device))  # assuming 63-dim audio features
 
-            # Video
+            # Video embeddings
             try:
-                video_emb = torch.tensor(extract_video_features(video_paths[i]), dtype=torch.float32, device=device).detach().clone()
+                feat = extract_video_features(video_paths[i])
+                video_features_list.append(torch.tensor(feat, dtype=torch.float32, device=device))
             except Exception as e:
                 print(f"[Warning] Video feature error at sample {i}: {e}")
-                video_emb = torch.zeros(d_model, device=device)
-            video_embs_list.append(video_emb)
+                video_features_list.append(torch.zeros(42, device=device))  # assuming 21-dim video features
 
         # Stack embeddings
-        text_embs = torch.stack(text_embs_list)
-        audio_embs = torch.stack(audio_embs_list)
-        video_embs = torch.stack(video_embs_list)
+        text_feats = torch.stack(text_features_list)
+        audio_feats = torch.stack(audio_features_list)
+        video_feats = torch.stack(video_features_list)
 
         # Convert PAD targets to tensor and move to device
         # Convert each target to float tensor and stack
-        pad_targets_tensor = torch.stack([torch.tensor(t, dtype=torch.float32) for t in pad_targets]).to(device)
+        pad_targets_tensor = torch.stack([torch.tensor(t, dtype=torch.float32, device=device) for t in pad_targets])
 
         # Debug prints to verify shapes and data
-        print("Text batch shape:", text_embs.shape, audio_embs.shape, video_embs.shape, pad_targets_tensor.shape)
+        print("Text batch shape:", text_feats.shape, audio_feats.shape, video_feats.shape, pad_targets_tensor.shape)
 
         # Forward pass
         optimizer.zero_grad()
         try:
-            pleasure, arousal, dominance = model(text_embs, audio_embs, video_embs)
+            pleasure, arousal, dominance = model(text_feats, audio_feats, video_feats)
         except Exception as e:
             print(f"[Error] Model forward failed: {e}")
             continue
 
-        preds = torch.stack([pleasure, arousal, dominance], dim=1).squeeze(-1)  # shape: [batch, 3]
+        preds = torch.cat([pleasure, arousal, dominance], dim=1).squeeze(-1)  # shape: [batch, 3]
+
+        # Debug: print shapes before loss calculation
+        print("preds.shape:", preds.shape)
+        print("pad_targets_tensor.shape:", pad_targets_tensor.shape)
+
         # Uses MSE loss for regression of PAD values
         loss = criterion(preds, pad_targets_tensor)
 

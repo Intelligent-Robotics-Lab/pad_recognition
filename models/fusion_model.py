@@ -9,7 +9,8 @@ class CrossModalTransformer(nn.Module):
             nhead=nhead,
             dim_feedforward=d_model*2,
             dropout=dropout,
-            activation='gelu'
+            activation='gelu',
+            batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
@@ -17,9 +18,9 @@ class CrossModalTransformer(nn.Module):
         # self.pool = nn.Linear(d_model, d_model)
 
     def forward(self, embeddings):
-        # Transformer expects (seq_len, batch_size, d_model), we have (batch_size, d_model) so add seq dim
+        # Transformer expects (batch, seq_len, d_model), we have (batch_size, d_model) so add seq dim
         x = embeddings.transpose(0, 1)  # (n_modalities, batch_size, d_model)
         x = self.transformer(x)  # (n_modalities, batch_size, d_model)
-        x = x.mean(dim=0)  # Pool across modalities: (batch_size, d_model)
+        x = x.mean(dim=1)  # Pool across modalities: (batch_size, d_model)
         fused = x
         return fused

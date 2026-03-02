@@ -1,18 +1,18 @@
 import os
 import pandas as pd
 from torch.utils.data import Dataset
-# from moviepy import VideoFileClip
+import torch
 import subprocess 
 
 # Map MELD emotion labels → PAD values
 emotion_to_pad = {
-    "anger":      [-0.6,  0.7,  0.3],
-    "disgust":    [-0.7,  0.6,  0.4],
-    "fear":       [-0.6,  0.8,  0.2],
-    "joy":        [ 0.8,  0.6,  0.7],
-    "neutral":    [ 0.0,  0.1,  0.5],
-    "sadness":    [-0.7,  0.3,  0.3],
-    "surprise":   [ 0.4,  0.8,  0.6]
+    "anger":      [-0.51, 0.59,  0.25],
+    "disgust":    [-0.375,  0.1,  0.15], # average of dislike, hate, reproach, resentment
+    "fear":       [-0.64,  0.6,  -0.43],
+    "joy":        [ 0.4,  0.2,  0.1],
+    "neutral":    [ 0.0,  0.0,  0.0],
+    "sadness":    [-0.34,  -0.1,  -0.52], # average of disappointment, distress, pity, remorse, shame
+    "surprise":   [ 0.6,  0.6, 0.4] # taken from the words section
 }
 
 def build_media_paths(root_dir, split, dialogue_id, utterance_id):
@@ -56,7 +56,9 @@ class MELDMultimodalDataset(Dataset):
 
         # Pass split to build correct paths for audio/video files
         audio_path, video_path = build_media_paths(self.root_dir, self.split, dialogue_id, utt_id)
-        pad_target = emotion_to_pad.get(emotion, [0.0, 0.1, 0.5])  # fallback PAD
+        pad_target = torch.tensor(emotion_to_pad.get(emotion, [0.0, 0.1, 0.5]), dtype=torch.float32)  # fallback PAD
+
+        print(f"DEBUG: idx={idx}, emotion='{emotion}', pad_target={pad_target}")
 
         return text, audio_path, video_path, pad_target
     
