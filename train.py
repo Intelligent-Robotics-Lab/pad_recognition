@@ -1,111 +1,123 @@
+"""
+Training script for the EmotionaPADModel on precomputed MELD features
+
+Pipeline:
+    - Load precomputed multimodal features (text, audio, video)
+    - Batch using custom collate function
+    - Forward pass through multimodal PAD model
+    - Compute smooth L1 loss on p,a,d targets
+    - Backdrop + optimzer setup
+    - Save trained model
+"""
+
 import os
 import torch
-import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
+from torch.optim.lr_scheduler import StepLR
 
-from utils.helpers import MELDMultimodalDataset  # your MELD Dataset class
-from models.emotion_model import EmotionPADModel       # your full multimodal model
-from features.text_features import prepare_text_features
-from features.audio_features import extract_audio_features
-from features.video_features import extract_video_features
+from utils.helpers import PrecomputedDataset, multimodal_collate
+from models.emotion_model import EmotionPADModel 
 
 # Configurations
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-root_dir = r"/home/carter/pad_recognition/data/MELD.Raw"
-batch_size = 64
-num_epochs = 1  # mini training
-d_model = 512   # embedding dimension
 
-# Initialize and load dataset
-dataset = MELDMultimodalDataset(root_dir=root_dir, split="train")
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+batch_size = 128
+num_epochs = 10
+d_model = 512
+learning_rate = 5e-4
 
-# Initailize model and loss optimizer
-model = EmotionPADModel(text_input_dim=776, audio_input_dim=126, video_input_dim=42, d_model=d_model).to(device)
+precomputed_dir = "data/MELD.Raw/precomputed"
+
+# Load precomputed dataset
+chunk_files = sorted([
+    os.path.join(precomputed_dir, f)
+    for f in os.listdir(precomputed_dir)
+    if f.startswith("train_features_") and f.endswith(".pt")
+])
+
+if not chunk_files:
+    raise FileNotFoundError(f"No precomputed chunks found in {precomputed_dir}")
+
+datasets = [PrecomputedDataset(f) for f in chunk_files]
+train_dataset = ConcatDataset(datasets)
+
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    collate_fn=multimodal_collate
+)
+
+# Initialize model, loss, optimizer
+model = EmotionPADModel(
+    text_input_dim=768,
+    audio_input_dim=63,
+    video_input_dim=21,
+    d_model=d_model
+).to(device)
+
+criterion = nn.SmoothL1Loss()
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+scheduler = StepLR(optimizer, step_size=10, gamma=0.5)
+
 model.train()
 
-criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=1e-3)
-
-# Training loop (mini run for testing)
+# Training loop
 for epoch in range(num_epochs):
     print(f"\nEpoch {epoch+1}/{num_epochs}")
 
-    for text_batch, audio_paths, video_paths, pad_targets in dataloader:
-        # Prep raw features tensors
-        text_features_list = []
-        audio_features_list = []
-        video_features_list = []
+    for batch_idx, batch in enumerate(train_loader):
+        if batch is None:
+            print(f"[Warning] Skipping batch {batch_idx} with invalid samples")
+            continue
 
-        # Convert the raw text/audio/video inputs to embeddings, catching any errors and using zero vectors as fallbacks
-        for i in range(len(text_batch)):
-            # Text embeddings
-            try:
-                feat = prepare_text_features(text_batch[i])
-                text_features_list.append(torch.tensor(feat, dtype=torch.float32, device=device))
-            except Exception as e:
-                print(f"[Warning] Text feature error at sample {i}: {e}")
-                text_features_list.append(torch.zeros(776, device=device))  # assuming 776-dim text features
+        text_feats, audio_feats, video_feats, pad_targets = batch
 
-            # Audio embeddings
-            try:
-                feat = extract_audio_features(audio_paths[i])
-                audio_features_list.append(torch.tensor(feat, dtype=torch.float32, device=device))
-            except Exception as e:
-                print(f"[Warning] Audio feature error at sample {i}: {e}")
-                audio_features_list.append(torch.zeros(126, device=device))  # assuming 63-dim audio features
+        # Move to device
+        text_feats = text_feats.to(device)
+        audio_feats = audio_feats.to(device)
+        video_feats = video_feats.to(device)
+        pad_targets = pad_targets.to(device)
 
-            # Video embeddings
-            try:
-                feat = extract_video_features(video_paths[i])
-                video_features_list.append(torch.tensor(feat, dtype=torch.float32, device=device))
-            except Exception as e:
-                print(f"[Warning] Video feature error at sample {i}: {e}")
-                video_features_list.append(torch.zeros(42, device=device))  # assuming 21-dim video features
+        # Optional: Normalize features (better done during precomputing)
+        text_feats = (text_feats - text_feats.mean(dim=0)) / (text_feats.std(dim=0) + 1e-6)
+        audio_feats = (audio_feats - audio_feats.mean(dim=0)) / (audio_feats.std(dim=0) + 1e-6)
+        video_feats = (video_feats - video_feats.mean(dim=0)) / (video_feats.std(dim=0) + 1e-6)
 
-        # Stack embeddings
-        text_feats = torch.stack(text_features_list)
-        audio_feats = torch.stack(audio_features_list)
-        video_feats = torch.stack(video_features_list)
-
-        # Convert PAD targets to tensor and move to device
-        # Convert each target to float tensor and stack
-        pad_targets_tensor = torch.stack([torch.tensor(t, dtype=torch.float32, device=device) for t in pad_targets])
-
-        # Debug prints to verify shapes and data
-        print("Text batch shape:", text_feats.shape, audio_feats.shape, video_feats.shape, pad_targets_tensor.shape)
+        optimizer.zero_grad()
 
         # Forward pass
-        optimizer.zero_grad()
         try:
             pleasure, arousal, dominance = model(text_feats, audio_feats, video_feats)
         except Exception as e:
             print(f"[Error] Model forward failed: {e}")
             continue
 
-        preds = torch.cat([pleasure, arousal, dominance], dim=1).squeeze(-1)  # shape: [batch, 3]
+        preds = torch.cat([pleasure, arousal, dominance], dim=1)  # [batch, 3]
 
-        # Debug: print shapes before loss calculation
-        print("preds.shape:", preds.shape)
-        print("pad_targets_tensor.shape:", pad_targets_tensor.shape)
-
-        # Uses MSE loss for regression of PAD values
-        loss = criterion(preds, pad_targets_tensor)
-
-        # Backpropogation computing gradients and updating weights
+        # Loss computation
+        loss = criterion(preds, pad_targets)
         loss.backward()
         optimizer.step()
 
-        print("Batch Loss:", loss.item())
-        print("Predicted PAD values:")
-        for i in range(len(text_batch)):
-            print(f"Sample {i+1}: P={preds[i,0].item():.3f}, A={preds[i,1].item():.3f}, D={preds[i,2].item():.3f}")
-        break  # only first batch for mini test (remove this to train on all batches)
+        # Debug prints for mini run
+        print(f"Batch {batch_idx+1} Loss: {loss.item():.4f}")
+        for i in range(len(text_feats)):
+            p, a, d = preds[i].tolist()
+            tp, ta, td = pad_targets[i].tolist()
+            print(f"Sample {i+1}: Pred P={p:.3f}, A={a:.3f}, D={d:.3f} | Target P={tp:.3f}, A={ta:.3f}, D={td:.3f}")
+            print("Valid samples in batch:", len(text_feats))
+            print("Prediction std:", preds.std(dim=0))
 
+        # Step the schedular at the end of the epoch
+        scheduler.step()
+
+        #break  # remove this break for full epoch
+
+# Save trained model
 os.makedirs("saved_models", exist_ok=True)
 torch.save(model.state_dict(), "saved_models/emotionpad_trained.pth")
-print ("Model saved to saved_models/emotionpad_trained.pth")
 
-print("Mini training run complete.")
+print("Training complete. Model saved to saved_models/emotionpad_trained.pth")

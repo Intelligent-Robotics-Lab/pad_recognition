@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 from torch.utils.data import Dataset
+from torch.nn.utils.rnn import pad_sequence
 import torch
 import subprocess 
 
@@ -61,6 +62,62 @@ class MELDMultimodalDataset(Dataset):
         print(f"DEBUG: idx={idx}, emotion='{emotion}', pad_target={pad_target}")
 
         return text, audio_path, video_path, pad_target
+
+class PrecomputedDataset(Dataset):
+    def __init__(self, file_path):
+        self.data = torch.load(file_path)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = self.data[idx]
+        return (
+            sample["text"],
+            sample["audio"],
+            sample["video"],
+            sample["pad"]
+        )
+
+def multimodal_collate(batch):
+    text, audio, video, pad = zip(*batch)
+
+    expected_audio_dim = 63
+    expected_video_dim = 21
+
+    filtered_text, filtered_audio, filtered_video, filtered_pad = [], [], [], []
+
+    for t, a, v, y in zip(text, audio, video, pad):
+
+        # Ensure audio and video are at least 2D
+        a = a if a.ndim == 2 else a.unsqueeze(0)
+        v = v if v.ndim == 2 else v.unsqueeze(0)
+
+        # Skip samples with incorrect dimensions
+        if a.shape[1] != expected_audio_dim:
+            continue
+        if v.shape[1] != expected_video_dim:
+            continue
+
+        # Skip samples with zero vectors
+        if torch.all(a == 0) or torch.all(v == 0) or torch.all(t == 0):
+            continue
+
+        filtered_text.append(t)
+        filtered_audio.append(a)
+        filtered_video.append(v)
+        filtered_pad.append(y)
+
+    # If nothing valid remains, skip batch
+    if len(filtered_text) == 0:
+        return None
+
+    text = torch.stack(filtered_text)
+    audio = pad_sequence(filtered_audio, batch_first=True)
+    video = pad_sequence(filtered_video, batch_first=True)
+    pad = torch.stack(filtered_pad)
+
+    return text, audio, video, pad
     
 # def extract_audio_from_mp4(mp4_path, save_path, target_sr=16000):
 #     """

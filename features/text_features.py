@@ -3,43 +3,39 @@ import torch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load models once
+# Load in the pretrained models
 embedding_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-embedding_model = AutoModel.from_pretrained("bert-base-uncased").to(device) # GPU if available, else CPU
-embedding_model.eval()  # Set to evaluation mode
+embedding_model = AutoModel.from_pretrained("bert-base-uncased").to(device)  # Use GPU if available, otherwise CPU
 
-sentiment_model = pipeline(
-    "sentiment-analysis",
-    model="distilbert/distilbert-base-uncased-finetuned-sst-2-english",
-    device=0 if torch.cuda.is_available() else -1)
-
-emotion_model = pipeline(
-    "text-classification",
-    model="j-hartmann/emotion-english-distilroberta-base",
-    top_k=None,
-    device=0 if torch.cuda.is_available() else -1)
+embedding_model.eval()  # Disable dropout and other features
 
 def extract_text_features(text):
+    # Handle single string input
+    if isinstance(text, str):
+        texts = [text]
+    else:
+        texts = text
+
     with torch.no_grad():
-        inputs = embedding_tokenizer(text, return_tensors="pt", truncation=True, padding=True).to(device)
+        # Tokenize text
+        inputs = embedding_tokenizer(
+            texts, 
+            return_tensors="pt", 
+            truncation=True, 
+            padding=True
+        ).to(device)
+        # Run BERT pretrained model to get token embeddings
         outputs = embedding_model(**inputs)
-        bert_embedding = outputs.last_hidden_state.mean(dim=1).detach().flatten()
+        # Keep the full sequence of token embeddings (go back to mean pooling if struggling)
+        token_embeddings = outputs.last_hidden_state.detach()  # [B, T, 768]
 
-    # Sentiment scalar
-    sent = sentiment_model(text)[0]
-    sentiment_value = sent["score"] if sent["label"] == "POSITIVE" else -sent["score"]
-    sentiment_tensor = torch.tensor([sentiment_value], dtype=torch.float32, device=device)
+        # Simple per utterance normalization
+        mean = token_embeddings.mean(dim=1,keepdim=True) # Mean over tokens
+        std = token_embeddings.std(dim=1, keepdim=True) + 1e-6 # Std over tokens and avoid divide by 0
+        token_embeddings = (token_embeddings - mean) / std
 
-    # Emotion distribution vector (switched from only using top score)
-    emotions = emotion_model(text)[0]
-    emotion_scores = torch.tensor(
-        [e["score"] for e in emotions], dtype=torch.float32, device=device)
+    return token_embeddings, inputs["attention_mask"] # Return attention mask too for training
 
-    # Stack raw features into single vector (not final representation)
-    features = torch.cat([bert_embedding, sentiment_tensor, emotion_scores])
-
-    return features
-
-# This is the final prep function for here
+# Optional prep function, changed functionality but still used this name throughout so kept it
 def prepare_text_features(text):
     return extract_text_features(text)

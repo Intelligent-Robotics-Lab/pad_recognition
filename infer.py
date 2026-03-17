@@ -1,63 +1,111 @@
-# For testing of weights and training, will be updated to include accuracy metrics
+"""
+Evaluation script for the EmotionPADModel using precomputed MELD features.
 
+Pipeline:
+    - Load precomputed test features (text, audio, video)
+    - Batch using multimodal_collate
+    - Forward pass through the trained model
+    - Collect predictions and compute regression metrics:
+        RMSE, MAE, Pearson Correlation, CCC
+"""
+
+import os
 import torch
-from torch.utils.data import DataLoader
-from utils.helpers import MELDMultimodalDataset
+from torch.utils.data import DataLoader, ConcatDataset
+from utils.helpers import PrecomputedDataset, multimodal_collate
 from models.emotion_model import EmotionPADModel
-from features.text_features import prepare_text_features
-from features.audio_features import extract_audio_features
-from features.video_features import extract_video_features
+import numpy as np
 
 # Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load test dataset
-test_dataset = MELDMultimodalDataset(root_dir=r"/home/carter/pad_recognition/data/MELD.Raw", split="test")
-test_loader = DataLoader(test_dataset, batch_size=2, shuffle=False)
+# Load precomputed test chunks
+precomputed_dir = "data/MELD.Raw/precomputed"
 
-# Initialize model
-model = EmotionPADModel(text_input_dim=776, audio_input_dim=126, video_input_dim=42, d_model=512).to(device)
+chunk_files = sorted([
+    os.path.join(precomputed_dir, f)
+    for f in os.listdir(precomputed_dir)
+    if f.startswith("test_features_")
+])
 
-# Load the trained weights
+if not chunk_files:
+    raise FileNotFoundError(f"No precomputed test chunks found in {precomputed_dir}")
+
+# Load all chunks
+datasets = [PrecomputedDataset(f) for f in chunk_files]
+test_dataset = ConcatDataset(datasets)
+test_loader = DataLoader(
+    test_dataset, 
+    batch_size=8, 
+    shuffle=False, 
+    collate_fn=multimodal_collate
+)
+
+# Load the trained model
+model = EmotionPADModel(
+    text_input_dim=768, 
+    audio_input_dim=63, 
+    video_input_dim=21, 
+    d_model=512
+).to(device)
+
 model.load_state_dict(torch.load("saved_models/emotionpad_trained.pth", map_location=device))
-model.eval()  # Set the model to eval mode for inference, won't update weights
+model.eval()
+
+# Metrics accumulators
+all_preds = []
+all_targets = []
 
 # Iterate over test batches
-for text_batch, audio_paths, video_paths, pad_targets in test_loader:
-    print("pad_targets (raw batch):", pad_targets)
-    # Convert raw features to embeddings
-    text_embs = torch.stack([
-        torch.tensor(prepare_text_features(t), dtype=torch.float32, device=device).detach().clone()
-        for t in text_batch
-    ])
-    audio_embs = torch.stack([
-        torch.tensor(extract_audio_features(a), dtype=torch.float32, device=device).detach().clone()    
-        for a in audio_paths
-    ])
-    video_embs = torch.stack([
-        torch.tensor(extract_video_features(v), dtype=torch.float32, device=device).detach().clone()
-        for v in video_paths
-    ])
+for batch_idx, (text_feats, audio_feats, video_feats, pad_targets) in enumerate(test_loader):
+    text_feats = text_feats.to(device)
+    audio_feats = audio_feats.to(device)
+    video_feats = video_feats.to(device)
+    pad_targets = pad_targets.to(device)
 
-    # Convert target PAD values to tensor
-    # FIXED: keep original tensor, move to device and ensure float32
-    pad_targets_tensor = pad_targets.to(device=device, dtype=torch.float32)  # shape: [batch, 3]
-    # Forward pass
-    with torch.no_grad(): # no need to compute gradients during inference
-        pleasure, arousal, dominance = model(text_embs, audio_embs, video_embs)
-        preds = torch.stack([pleasure, arousal, dominance], dim=1).squeeze(-1)  # shape: [batch, 3]
+    # Optionally normalize the data (better done during precompute)
+    audio_feats = (audio_feats - audio_feats.mean(dim=0)) / (audio_feats.std(dim=0) + 1e-6)
+    video_feats = (video_feats - video_feats.mean(dim=0)) / (video_feats.std(dim=0) + 1e-6)
 
-    # Print predictions
-    for i in range(len(text_batch)):
-        pred_p, pred_a, pred_d = preds[i].tolist()  # safer, gets values as floats
-        # Debug lines
-        print("pad_targets_tensor.shape:", pad_targets_tensor.shape)
-        print("pad_targets_tensor[i]:", pad_targets_tensor[i])
-        target_p, target_a, target_d = pad_targets_tensor[i].tolist()  # assuming pad_targets_tensor[i] is list/tuple
+    with torch.no_grad():
+        pleasure, arousal, dominance = model(text_feats, audio_feats, video_feats)
+        preds = torch.cat([pleasure, arousal, dominance], dim=1)  # [batch, 3]
 
-        print(f"Sample {i+1}:")
-        print(f"  Predicted -> P: {pred_p:.3f}, A: {pred_a:.3f}, D: {pred_d:.3f}")
-        print(f"  Target    -> P: {target_p:.3f}, A: {target_a:.3f}, D: {target_d:.3f}")
-        print("-" * 40)
-    
-    break  # remove break to run through entire test set
+    all_preds.append(preds.cpu().numpy())
+    all_targets.append(pad_targets.cpu().numpy())
+
+# Convert to numpy arrays
+all_preds = np.vstack(all_preds)
+all_targets = np.vstack(all_targets)
+
+# Matric calculations
+def rmse(y_true, y_pred):
+    return np.sqrt(np.mean((y_true - y_pred)**2))
+
+def mae(y_true, y_pred):
+    return np.mean(np.abs(y_true - y_pred))
+
+def pearson_cc(y_true, y_pred):
+    """Pearson Correlation Coefficient"""
+    return np.corrcoef(y_true, y_pred)[0,1]
+
+def ccc(y_true, y_pred):
+    """Concordance Correlation Coefficient"""
+    mean_true = np.mean(y_true)
+    mean_pred = np.mean(y_pred)
+    var_true = np.var(y_true)
+    var_pred = np.var(y_pred)
+    cov = np.mean((y_true - mean_true)*(y_pred - mean_pred))
+    return (2*cov) / (var_true + var_pred + (mean_true - mean_pred)**2 + 1e-8)
+
+# Compute metrics per PAD dimension
+dims = ["Pleasure", "Arousal", "Dominance"]
+for i, dim in enumerate(dims):
+    y_true = all_targets[:, i]
+    y_pred = all_preds[:, i]
+    print(f"{dim}:")
+    print(f"  RMSE: {rmse(y_true, y_pred):.4f}")
+    print(f"  MAE : {mae(y_true, y_pred):.4f}")
+    print(f"  Pearson CC: {pearson_cc(y_true, y_pred):.4f}")
+    print(f"  CCC : {ccc(y_true, y_pred):.4f}")
+    print("-"*40)
