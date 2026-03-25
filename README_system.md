@@ -61,7 +61,7 @@ Video features capture facial expression and nonverbal cues. Each video is sampl
 - **Gaze direction** and related cues
 The resulting tensor shape isL [batch, num_frames, 42]
 
-# **5. Feature Encoding**
+## **5. Feature Encoding**
 Each modality's raw feature vector is passed through a dedicated encoder. This includes a small transformer model detected for text, and a seperate LSTM model for each the audio and video features to learn representation across time. These encoders also serve to project the heterogenous input features into a shared **512-dimensional space**. Noise injection is also utilized during training to encourage robustness.
 
 ## **6. Cross-Modal Fusion**

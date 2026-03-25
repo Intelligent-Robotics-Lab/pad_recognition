@@ -20,7 +20,7 @@ import numpy as np
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load precomputed test chunks
-precomputed_dir = "data/MELD.Raw/precomputed"
+precomputed_dir = "data/MELD.Raw/precomputed_v2"
 
 chunk_files = sorted([
     os.path.join(precomputed_dir, f)
@@ -45,11 +45,11 @@ test_loader = DataLoader(
 model = EmotionPADModel(
     text_input_dim=768, 
     audio_input_dim=63, 
-    video_input_dim=21, 
+    video_input_dim=52, 
     d_model=512
 ).to(device)
 
-model.load_state_dict(torch.load("saved_models/emotionpad_trained.pth", map_location=device))
+model.load_state_dict(torch.load("saved_models/best_model.pth", map_location=device))
 model.eval()
 
 # Metrics accumulators

@@ -55,8 +55,8 @@ class EmotionPADModel(nn.Module):
         # Noise injection to prevent modality collapse and encourage robustness 
         if self.training:
             text_embedding = text_embedding + 0.01 * torch.randn_like(text_embedding)
-            audio_embedding = audio_embedding + 0.05 * torch.randn_like(audio_embedding)
-            video_embedding = video_embedding + 0.1 * torch.randn_like(video_embedding)
+            audio_embedding = audio_embedding + 0.01 * torch.randn_like(audio_embedding)
+            video_embedding = video_embedding + 0.01 * torch.randn_like(video_embedding)
 
         # Stack the embedding for cross-modal transformer
         embeddings = torch.stack(

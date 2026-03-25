@@ -77,7 +77,7 @@ class AudioProjectionEncoder(nn.Module):
 # Video encoder using an LSTM model to capture temporal dynamics
 class VideoProjectionEncoder(nn.Module):
 
-    def __init__(self, input_dim=21, d_model=512):
+    def __init__(self, input_dim=52, d_model=512):
         super().__init__()
 
         self.input_proj = nn.Linear(input_dim, 1024)
@@ -94,8 +94,8 @@ class VideoProjectionEncoder(nn.Module):
 
     def forward(self,x):
         """
-        x shape (b, T_video, 21)
-        example batch (32, 40, 21)
+        x shape (b, T_video, 52)
+        example batch (32, 40, 52)
         """
 
         x = self.input_proj(x)

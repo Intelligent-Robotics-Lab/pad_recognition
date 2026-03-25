@@ -1,6 +1,8 @@
 from transformers import AutoTokenizer, AutoModel, pipeline
 import torch
 
+# Returns shape of (T_text, d_model) in our case (T_ 768)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load in the pretrained models
@@ -10,31 +12,32 @@ embedding_model = AutoModel.from_pretrained("bert-base-uncased").to(device)  # U
 embedding_model.eval()  # Disable dropout and other features
 
 def extract_text_features(text):
-    # Handle single string input
-    if isinstance(text, str):
-        texts = [text]
-    else:
-        texts = text
+    # Ensure input is a single string
+    if not isinstance(text, str):
+        text = str(text)
 
-    with torch.no_grad():
-        # Tokenize text
-        inputs = embedding_tokenizer(
-            texts, 
-            return_tensors="pt", 
-            truncation=True, 
-            padding=True
-        ).to(device)
-        # Run BERT pretrained model to get token embeddings
-        outputs = embedding_model(**inputs)
-        # Keep the full sequence of token embeddings (go back to mean pooling if struggling)
-        token_embeddings = outputs.last_hidden_state.detach()  # [B, T, 768]
+    # Tokenize text
+    inputs = embedding_tokenizer(
+        text, 
+        return_tensors="pt", 
+        truncation=True, 
+        padding=False
+    ).to(device)
 
-        # Simple per utterance normalization
-        mean = token_embeddings.mean(dim=1,keepdim=True) # Mean over tokens
-        std = token_embeddings.std(dim=1, keepdim=True) + 1e-6 # Std over tokens and avoid divide by 0
-        token_embeddings = (token_embeddings - mean) / std
+    # Forward pass
+    outputs = embedding_model(**inputs)
+    token_embeddings = outputs.last_hidden_state  # [B, T, 768]
 
-    return token_embeddings, inputs["attention_mask"] # Return attention mask too for training
+    # Remove batch dimension [T, 768]
+
+    token_embeddings = token_embeddings.squeeze(0)
+
+    # Light, stable normalization across hidden_dim
+    mean = token_embeddings.mean(dim=0, keepdim=True)
+    std = token_embeddings.std(dim=0, keepdim=True) + 1e-6
+    token_embeddings = (token_embeddings - mean) / std
+
+    return token_embeddings.cpu()
 
 # Optional prep function, changed functionality but still used this name throughout so kept it
 def prepare_text_features(text):

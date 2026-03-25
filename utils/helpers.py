@@ -79,28 +79,33 @@ class PrecomputedDataset(Dataset):
             sample["pad"]
         )
 
+import torch
+from torch.nn.utils.rnn import pad_sequence
+
 def multimodal_collate(batch):
+    # batch is a list of (text, audio, video, pad)
     text, audio, video, pad = zip(*batch)
 
     expected_audio_dim = 63
-    expected_video_dim = 21
+    expected_video_dim = 52
 
     filtered_text, filtered_audio, filtered_video, filtered_pad = [], [], [], []
 
     for t, a, v, y in zip(text, audio, video, pad):
+        # Ensure audio/video are 2D
+        if a.ndim == 1:
+            a = a.unsqueeze(0)
+        if v.ndim == 1:
+            v = v.unsqueeze(0)
 
-        # Ensure audio and video are at least 2D
-        a = a if a.ndim == 2 else a.unsqueeze(0)
-        v = v if v.ndim == 2 else v.unsqueeze(0)
-
-        # Skip samples with incorrect dimensions
+        # Dimension checks
         if a.shape[1] != expected_audio_dim:
             continue
         if v.shape[1] != expected_video_dim:
             continue
 
-        # Skip samples with zero vectors
-        if torch.all(a == 0) or torch.all(v == 0) or torch.all(t == 0):
+        # Skip only audio/video zero fallbacks
+        if torch.all(a == 0) or torch.all(v == 0):
             continue
 
         filtered_text.append(t)
@@ -112,34 +117,35 @@ def multimodal_collate(batch):
     if len(filtered_text) == 0:
         return None
 
-    text = torch.stack(filtered_text)
-    audio = pad_sequence(filtered_audio, batch_first=True)
-    video = pad_sequence(filtered_video, batch_first=True)
-    pad = torch.stack(filtered_pad)
+    # Pad variable-length sequences
+    text = pad_sequence(filtered_text, batch_first=True)     # [B, T_text, 768]
+    audio = pad_sequence(filtered_audio, batch_first=True)   # [B, T_audio, 63]
+    video = pad_sequence(filtered_video, batch_first=True)   # [B, T_video, 52]
+    pad = torch.stack(filtered_pad)                          # [B, 3]
 
     return text, audio, video, pad
     
-# def extract_audio_from_mp4(mp4_path, save_path, target_sr=16000):
-#     """
-#     Extract audio from a .mp4 video and save as .wav.
+def extract_audio_from_mp4(mp4_path, save_path, target_sr=16000):
+    """
+    Extract audio from a .mp4 video and save as .wav.
 
-#     Parameters:
-#         mp4_path (str): Path to input .mp4 video
-#         save_path (str): Path to save .wav file
-#         target_sr (int): Sampling rate
-#     """
-#     # Skip if .wav already exists
-#     if os.path.exists(save_path):
-#         print(f"Skipped (already exists): {save_path}")
-#         return save_path
+    Parameters:
+        mp4_path (str): Path to input .mp4 video
+        save_path (str): Path to save .wav file
+        target_sr (int): Sampling rate
+    """
+    # Skip if .wav already exists
+    if os.path.exists(save_path):
+        print(f"Skipped (already exists): {save_path}")
+        return save_path
 
-#     clip = VideoFileClip(mp4_path)
+    clip = VideoFileClip(mp4_path)
 
-#     # Write audio to .wav with target sampling rate
-#     clip.audio.write_audiofile(save_path, fps=target_sr, verbose=False, logger=None)
-#     clip.close()
-#     print(f"Saved: {save_path}")
-#     return save_path
+    # Write audio to .wav with target sampling rate
+    clip.audio.write_audiofile(save_path, fps=target_sr, verbose=False, logger=None)
+    clip.close()
+    print(f"Saved: {save_path}")
+    return save_path
 
 def extract_all_meld_audio(root_dir):
     """

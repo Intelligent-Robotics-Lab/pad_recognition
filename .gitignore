@@ -7,3 +7,7 @@ __pycache__/
 # Ignore dataset folder for sake of space
 data/MELD.Raw/
 saved_models/
+
+# Model files
+*.pth
+*.pt

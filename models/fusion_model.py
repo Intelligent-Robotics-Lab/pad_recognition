@@ -42,6 +42,6 @@ class CrossModalTransformer(nn.Module):
 
         x = self.transformer(embeddings)  # perform cross-modal attention
         weights = torch.softmax(self.attn_pool(x), dim=1)  # learn to weight modalities differently (B, 3, 1)
-        fused = (weight * x).sum(dim=1)   # (B, d_model)
+        fused = (weights * x).sum(dim=1)   # (B, d_model)
         
         return fused
