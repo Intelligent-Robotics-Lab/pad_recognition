@@ -1,25 +1,25 @@
-# PAD Multimodal Emotion Recognition
+# **PAD Multimodal Emotion Recognition**
 
-A Python-based multimodal emotion recognition system designed for socially aware human–robot interaction. The model predicts continuous **Pleasure, Arousal, and Dominance (PAD)** values for each conversational turn by integrating **text, auidio,** and **visual** cues.
+This project presents a Python-based multimodal emotion recognition system designed for socially aware human–robot interaction. The model predicts continuous **Pleasure, Arousal, and Dominance (PAD)** values for each conversational turn by integrating **text, audio,** and **visual** cues.
 
 This repository implements a modern, transformer-based multimodal architecture suitable for research in affective computing, social robotics, and Human-AI interaction.
 
-# Key Features
+## **Key Features**
 - Multimodal PAD prediction (continuous values in [-1,1])
 - Transformer-based **cross-modal attention fusion**
 - Independent **text, audio, and video encoders**
 - Precomputed feature pipeline for fast training
 - Evaluation metrics: RMSE, MAE, Pearson, CCC
 
-## Model Overview
+### **Model Overview**
 
 This system implements a modular pipeline grounded in affective computing and multimodal fusion:
 
 1. **Feature Extraction**
 Each modality is processed into structured, frame-level or token-level features:
 - **Text:** BERT token embeddings
-- **Audio:** MFCCs, deltas, pitch, energy, spectral features
-- **Video:** Facial landmarks, AU-style features, head pose
+- **Audio:** Wav2Vec feature embeddings
+- **Video:** FER-style emotion prediction
 These features are precomputed for efficiency.
 2. **Modality Encoders**
 Each modality is encoded independently:
@@ -37,67 +37,77 @@ Three independent regression heads predict:
 - **Dominance**
 Outputs are continuous and constrained to [-1,1]
 
-## Project Structure
+## **Project Structure**
 pad-emotion/
-- data/             # Raw and preprocessed data files
-- features/         # Feature extraction files
-- models/           # Model definitions
-- saved_models/     # Saved training weights
-- utils/            # Helper utilities
+- data/                 # Raw and preprocessed data files
+- features/             # Feature extraction files
+- inference_scripts/    # Evaluation and test scripts
+- models/               # Model definitions
+- saved_models/         # Saved training weights
+- train_scripts/        # All necessary training scripts
+- utils/                # Helper utilities
 
-- train.py
-- infer.py
-- README_system.md  # Detailed system documentation
-- README.md         # Main README with setup instructions
-- requirements.txt  # Python dependencies
+- README_system.md      # Detailed system documentation
+- README.md             # Main README with setup instructions
+- requirements.txt      # Python dependencies for Dockerfile (future update)
 
-## Clone Repository
+## **Clone Repository**
 git clone https://github.com/Intelligent-Robotics-Lab/pad_recognition
-cd pad-emotion
+cd pad_recognition
 
 ## **Set Up Virtual Environment and Depencies**
 
-## Virtual Environment Setup
+### **Virtual Environment Setup**
 
-### Create and activate a Python virtual environment
+#### **Create and activate a Python virtual environment**
 python -m venv venv
 
-### Activate
+#### **Activate**
 **Linux/macOS**
 source venv/bin/activate
 **Windows**
 venv\Scripts\activate
 
-### Upgrade pip
+#### **Upgrade pip**
 pip install --upgrade pip
 
-### Install dependencies
+#### **Install dependencies**
 pip install -r requirements.txt
+- this will be updated in future iterations to be a dockerized container
 
 ## **Running Scripts**
 
-## Usage
+### **Usage**
 
-### Train Model
+#### **Train Model**
 Precompute feautres first (see precompute_features.py and features/ directory), then run:
-python train.py
+- python train.py for full model predictions
+- python train_single_modality.py for single modality prediction (change line 49 to switch modality)
+- python train_text_audio.py for fused text and audio prediction
 Model checkpoints will be saved to:
 saved_models/emotionpad_trained.pth
 
-### Evaluate
-run python infer.py
-This computes: RMSE, MAE, Pearson Correlation, and Concordance Correlation Coefficient (CCC) for each PAD dimension.
+#### **Evaluation and Inference**
+Testing with the metrics RMSE, MAE, Pearson Correlation, and Concordance Correlation Coefficient (CCC) for each PAD dimension can be performed for both the full model and single modality.
 
-## Example Benchmark (Placeholder)
+Use the precomputed test features as described in training and run:
+- python infer.py for full model testing with full saved model weights
+- python infer_single_modality.py for single modality testing (change line 16 to switch modality)
+- python infer_text_audio.py for fused text and audio testing
 
-## Future Work
-Planned improvements and research directions:
+The inference model pulls the appropriate weights from the saved_models folder after training is completed. These models will constantly be overwritten by new improvements so benchmarks need to be saved if they are to be accessed.
 
-## License
+## **Example Benchmark**
 (placeholder)
 
-## Contributions
+## **Future Work**
 (placeholder)
 
-## Citations
+## **License**
+(placeholder)
+
+## **Contributions**
+(placeholder)
+
+## **Citations**
 (placeholder)

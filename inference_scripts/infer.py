@@ -1,12 +1,7 @@
-"""
-Evaluation script for the EmotionPADModel using precomputed MELD features.
-
-Pipeline:
-    - Load precomputed test features (text, audio, video)
-    - Batch using multimodal_collate
-    - Forward pass through the trained model
-    - Collect predictions and compute regression metrics:
-        RMSE, MAE, Pearson Correlation, CCC
+""""
+Inference script for evaluating the trained EmotionPADModel on the MELD test set.
+This script loads the precomputed test features, runs them through the model, and computes evaluation metrics
+like RMSE, MAE, Pearson CC, and CCC for each of the PAD dimensions.
 """
 
 import os
@@ -16,11 +11,9 @@ from utils.helpers import PrecomputedDataset, multimodal_collate
 from models.emotion_model import EmotionPADModel
 import numpy as np
 
-# Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load precomputed test chunks
-precomputed_dir = "data/MELD.Raw/precomputed_v2"
+precomputed_dir = "data/MELD.Raw/precomputed_v4"
 
 chunk_files = sorted([
     os.path.join(precomputed_dir, f)
@@ -31,7 +24,6 @@ chunk_files = sorted([
 if not chunk_files:
     raise FileNotFoundError(f"No precomputed test chunks found in {precomputed_dir}")
 
-# Load all chunks
 datasets = [PrecomputedDataset(f) for f in chunk_files]
 test_dataset = ConcatDataset(datasets)
 test_loader = DataLoader(
@@ -41,29 +33,25 @@ test_loader = DataLoader(
     collate_fn=multimodal_collate
 )
 
-# Load the trained model
 model = EmotionPADModel(
-    text_input_dim=768, 
-    audio_input_dim=63, 
-    video_input_dim=52, 
+    text_input_dim=1024, 
+    audio_input_dim=1024, 
+    video_input_dim=7, 
     d_model=512
 ).to(device)
 
 model.load_state_dict(torch.load("saved_models/best_model.pth", map_location=device))
 model.eval()
 
-# Metrics accumulators
 all_preds = []
 all_targets = []
 
-# Iterate over test batches
 for batch_idx, (text_feats, audio_feats, video_feats, pad_targets) in enumerate(test_loader):
     text_feats = text_feats.to(device)
     audio_feats = audio_feats.to(device)
     video_feats = video_feats.to(device)
     pad_targets = pad_targets.to(device)
 
-    # Optionally normalize the data (better done during precompute)
     audio_feats = (audio_feats - audio_feats.mean(dim=0)) / (audio_feats.std(dim=0) + 1e-6)
     video_feats = (video_feats - video_feats.mean(dim=0)) / (video_feats.std(dim=0) + 1e-6)
 
@@ -74,11 +62,9 @@ for batch_idx, (text_feats, audio_feats, video_feats, pad_targets) in enumerate(
     all_preds.append(preds.cpu().numpy())
     all_targets.append(pad_targets.cpu().numpy())
 
-# Convert to numpy arrays
 all_preds = np.vstack(all_preds)
 all_targets = np.vstack(all_targets)
 
-# Matric calculations
 def rmse(y_true, y_pred):
     return np.sqrt(np.mean((y_true - y_pred)**2))
 
@@ -98,7 +84,6 @@ def ccc(y_true, y_pred):
     cov = np.mean((y_true - mean_true)*(y_pred - mean_pred))
     return (2*cov) / (var_true + var_pred + (mean_true - mean_pred)**2 + 1e-8)
 
-# Compute metrics per PAD dimension
 dims = ["Pleasure", "Arousal", "Dominance"]
 for i, dim in enumerate(dims):
     y_true = all_targets[:, i]

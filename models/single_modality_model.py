@@ -11,12 +11,9 @@ class SingleModalityModel(nn.Module):
         self.pad_regressor = pad_regressor
 
     def forward(self, x):
-        # text  -> (B, 768), audio -> (B, T, 63), video -> (B, T, 52)
-
-        # If temporal (audio/video), let encoder handle it
         embedding = self.encoder(x)  # (B, 512)
 
-        # Debug: monitor embedding health
+        # Debug: print embedding stats during training
         if self.training:
             print("Embedding stats -> mean:",
                   embedding.mean().item(),

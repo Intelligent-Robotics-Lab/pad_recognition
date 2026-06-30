@@ -2,13 +2,14 @@ librosa
 numpy
 soundfile
 torch
-torchvision
+torchaudio
 transformers
 face_alignment
 opencv-python
 fer==22.4.0
-setuptools
 tensorflow
 moviepy
 pandas
-subrprocess
+scipy
+tqdm
+feat

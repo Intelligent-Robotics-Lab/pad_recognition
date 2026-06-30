@@ -1,13 +1,5 @@
 """
-Training script for the EmotionaPADModel on precomputed MELD features
-
-Pipeline:
-    - Load precomputed multimodal features (text, audio, video)
-    - Batch using custom collate function
-    - Forward pass through multimodal PAD model
-    - Compute smooth L1 loss on p,a,d targets
-    - Backprop + optimizer setup
-    - Save trained model
+Training script for the EmotionaPADModel on precomputed MELD features.
 """
 
 import os
@@ -17,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, ConcatDataset
 from torch.optim.lr_scheduler import StepLR
 
-from utils.helpers import PrecomputedDataset, multimodal_collate
+from utils.helpers import PrecomputedDataset, multimodal_collate, get_emotions_indices
 from models.emotion_model import EmotionPADModel 
 
 # Configurations
@@ -28,9 +20,25 @@ num_epochs = 50
 d_model = 512
 learning_rate = 5e-4
 
-precomputed_dir = "data/MELD.Raw/precomputed_v2"
+precomputed_dir = "data/MELD.Raw/precomputed_v4"
+stats_path = os.path.join(precomputed_dir, "dataset_stats.pt")
 
-# Loss
+# Class counts (from the train set only, used for weighting)
+counts = torch.tensor([
+    1109,  # anger
+    271,   # disgust
+    268,   # fear
+    1743,  # joy
+    4710,  # neutral
+    683,   # sadness
+    1205   # surprise
+], dtype=torch.float32, device=device)
+
+# Inverse frequency weights
+weights = counts.sum() / counts
+weights = weights / weights.max()
+
+# Loss functions
 def ccc_loss(pred, target):
     pred_mean = pred.mean(dim=0)
     target_mean = target.mean(dim=0)
@@ -43,18 +51,19 @@ def ccc_loss(pred, target):
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
     return 1 - ccc.mean()
 
-# Load train dataset
-chunk_files = sorted([
-    os.path.join(precomputed_dir, f)
-    for f in os.listdir(precomputed_dir)
-    if f.startswith("train_features_") and f.endswith(".pt")
-])
+# Load datasets
+def load_split(prefix):
+    files = sorted([
+        os.path.join(precomputed_dir, f)
+        for f in os.listdir(precomputed_dir)
+        if f.startswith(prefix) and f.endswith(".pt")
+    ])
+    if not files:
+        raise FileNotFoundError(f"No {prefix} files found")
+    return ConcatDataset([PrecomputedDataset(f, stats_path=stats_path) for f in files])
 
-if not chunk_files:
-    raise FileNotFoundError(f"No precomputed chunks found in {precomputed_dir}")
-
-datasets = [PrecomputedDataset(f) for f in chunk_files]
-train_dataset = ConcatDataset(datasets)
+train_dataset = load_split("train_features_")
+val_dataset = load_split("dev_features_")
 
 train_loader = DataLoader(
     train_dataset,
@@ -63,19 +72,6 @@ train_loader = DataLoader(
     collate_fn=multimodal_collate
 )
 
-# Validation dataset
-val_files = sorted([
-    os.path.join(precomputed_dir, f)
-    for f in os.listdir(precomputed_dir)
-    if f.startswith("dev_features_") and f.endswith(".pt")
-])
-
-if not val_files:
-    raise FileNotFoundError(f"No validation chunks found in {precomputed_dir}")
-
-val_datasets = [PrecomputedDataset(f) for f in val_files]
-val_dataset = ConcatDataset(val_datasets)
-
 val_loader = DataLoader(
     val_dataset,
     batch_size=batch_size,
@@ -83,15 +79,26 @@ val_loader = DataLoader(
     collate_fn=multimodal_collate
 )
 
+model = EmotionPADModel(
+    text_input_dim=1024,
+    audio_input_dim=1024,
+    video_input_dim=7,
+    d_model=d_model
+).to(device)
+
+mse_loss = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+scheduler = StepLR(optimizer, step_size=10, gamma=0.5)
+
 # Evaluation
 @torch.no_grad()
-def evaluate(model, val_loader, device):
+def evaluate(model, loader, device):
     model.eval()
 
     all_preds = []
     all_targets = []
 
-    for batch in val_loader:
+    for batch in loader:
         if batch is None:
             continue
         
@@ -114,28 +121,15 @@ def evaluate(model, val_loader, device):
     val_ccc = 1 - ccc_loss(all_preds, all_targets).item()
 
     model.train()
+
     return val_ccc
-
-# Model
-model = EmotionPADModel(
-    text_input_dim=768,
-    audio_input_dim=63,
-    video_input_dim=52,
-    d_model=d_model
-).to(device)
-
-mse_loss = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-scheduler = StepLR(optimizer, step_size=10, gamma=0.5)
 
 model.train()
 
-# Early stopping setup
 best_val_ccc = -float("inf")
-patience = 5
+patience = 10
 patience_counter = 0
 
-# Create save directory ONCE
 os.makedirs("saved_models", exist_ok=True)
 save_path = "saved_models/best_model.pth"
 
@@ -168,10 +162,21 @@ for epoch in range(num_epochs):
 
         preds = torch.cat([pleasure, arousal, dominance], dim=1)
 
-        loss_mse = mse_loss(preds, pad_targets)
+        # Per sample MSE calculation
+        mse = ((preds - pad_targets) ** 2).mean(dim=1)  # (batch,)
+
+        # Emotion-based weighting
+        emotion_idx = get_emotions_indices(pad_targets)
+        sample_weights = weights[emotion_idx]
+
+        # Stablize weights to prevent extreme values
+        sample_weights = torch.clamp(sample_weights, 0.2, 2.0)
+
+        # Losses
         loss_ccc = ccc_loss(preds, pad_targets)
 
-        loss = 0.5 * loss_mse + 0.5 * loss_ccc
+        # Final weighted loss
+        loss = loss_ccc + 0.2 * (sample_weights * mse).mean()
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -183,6 +188,8 @@ for epoch in range(num_epochs):
         if batch_idx % 20 == 0:
             print(f"Batch {batch_idx+1} Loss: {loss.item():.4f}")
             print("Prediction std:", preds.std(dim=0))
+            print("Weight mean:", sample_weights.mean().item())
+            print("Weight max :", sample_weights.max().item())
 
     avg_loss = running_loss / len(train_loader)
     avg_ccc = running_ccc / len(train_loader)
@@ -196,14 +203,11 @@ for epoch in range(num_epochs):
     if val_ccc > best_val_ccc:
         best_val_ccc = val_ccc
         patience_counter = 0
-
         torch.save(model.state_dict(), save_path)
         print("New best model saved.")
-
     else:
         patience_counter += 1
         print(f"No improvement. Patience: {patience_counter}/{patience}")
-
         if patience_counter >= patience:
             print("Early stopping triggered.")
             break

@@ -3,14 +3,10 @@ import numpy as np
 import torch
 import face_alignment
 
-# Returns tensor of shape (T_video, 52)
-
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Initialize the face-alignment model (detects facial landmarks)
 fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, device=device, flip_input=False)
 
-# Optionally, choose which AUs you want
 selected_aus = [
     'AU01', 'AU02', 'AU04', 'AU05', 'AU06', 'AU07', 'AU09', 'AU10', 'AU12', 'AU14', 'AU15', 'AU17',
     'AU20', 'AU23', 'AU25', 'AU26', 'AU28', 'AU43'
@@ -25,11 +21,10 @@ def landmarks_to_features(landmarks):
     Convert 68-point landmarks to a 26-dim geometric feature vector.
     AU-inspired, scale-normalized, non-redundant.
     """
-    # If no landmarks, return zeros
     if landmarks is None or len(landmarks) == 0:
         return np.zeros(selected_dim, dtype=np.float32)
 
-    lm = landmarks[0]  # (68, 2)
+    lm = landmarks[0]
 
     # Inter-ocular distance for scale normalization
     left_eye_outer = lm[36]
@@ -139,8 +134,7 @@ def landmarks_to_features(landmarks):
 
     return feats
 
-def extract_video_features(video_path, sample_fps=5, max_seconds=None,
-                           resize_dim=(160, 160), include_deltas=True):
+def extract_video_features(video_path, sample_fps=5, max_seconds=None, resize_dim=(160, 160), include_deltas=True):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video {video_path}")
@@ -196,13 +190,6 @@ def extract_video_features(video_path, sample_fps=5, max_seconds=None,
                 x[nans] = np.interp(idx[nans], valid, x[valid])
             frame_features[:, d] = x
 
-    # Normalize per video
-    mean = np.mean(frame_features, axis=0, keepdims=True)
-    std = np.std(frame_features, axis=0, keepdims=True) + 1e-6
-    std = np.maximum(std, 1e-3)
-    frame_features = (frame_features - mean) / std
-
-    # Add deltas
     if include_deltas:
         deltas = np.diff(frame_features, axis=0, prepend=frame_features[0:1])
         frame_features = np.concatenate([frame_features, deltas], axis=1)  # (T, 52)
