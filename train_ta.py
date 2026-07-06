@@ -27,7 +27,8 @@ model = EmotionPADModelTA(
 ).to(device)
 
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-loss_fn = nn.MSELoss()
+loss_fn = nn.SmoothL1Loss(reduction="none")
+alpha = 1.5
 
 # CCCs for evaluation only
 @torch.no_grad()
@@ -49,6 +50,14 @@ def ccc_score(pred, target):
 print("Loading IEMOCAP...")
 ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
 ds = ds.cast_column("audio", Audio(decode=False))
+
+# Compute the dataset mean to use in weighted loss function
+targets = torch.tensor(
+    [[ds[i]["EmoVal"], ds[i]["EmoAct"], ds[i]["EmoDom"]] for i in range(len(ds))],
+    dtype = torch.float32
+)
+
+mu = targets.mean(dim=0).to(device) # shape (3,)
 
 print("Dataset size:", len(ds))
 
@@ -138,7 +147,14 @@ for epoch in range(num_epochs):
         p, a, d = model(text_feats, audio_feats)
         pred = torch.cat([p, a, d], dim=1)
 
-        loss = loss_fn(pred, target)
+        # Per-sample SmoothL1
+        per_sample_loss = loss_fn(pred, target).mean(dim=1) # (1,)
+
+        # Weighting based on distance from mean PAD
+        diff = torch.abs(target - mu)
+        sample_weight = 1.0 + alpha * diff.mean(dim=1)
+
+        loss = (sample_weight * per_sample_loss).mean()
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -149,7 +165,18 @@ for epoch in range(num_epochs):
         if i % 200 == 0:
             print(f"\nSample {i}")
             print("Pred:", pred.detach().cpu())
+
+            print("Pred mean:", pred.mean(dim=0).detach().cpu())
+            print("Pred std:", pred.std(dim=0).detach().cpu())
+
             print("Target:", target.detach().cpu())
+
+            print("Target mean:", target.mean(dim=0).detach().cpu())
+            print("Target std:", target.std(dim=0).detach().cpu())
+
+            print("Pred range:", pred.min().item(), pred.max().item())
+            print("Target range:", target.min().item(), target.max().item())
+
             print("Loss:", loss.item())
 
     avg_loss = running_loss / len(train_idx)
