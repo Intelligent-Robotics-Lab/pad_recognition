@@ -1,77 +1,47 @@
-import librosa
-import numpy as np
-import soundfile as sf
+import torch
+import torchaudio
+from transformers import HubertModel, Wav2Vec2Processor
 
-"""
-Extract frame-level audio features for emotion modeling
-Parameters:
-    - audio_path: Path to the audio file
-    - target_sr: Target sampling rate for audio processing
-    - max_seconds: Maximum duration of audio to process (in seconds)
-Returns:
-features: np.ndarray of shape (T_audio, 42) where T_audio is the number of time frames and 42 is the feature dimension per frame
-    Frame-level audio features including:
-    - MFCCs (20)
-    - Delta MFCCs (20)
-    - Energy (1)
-    - Spectral centroid (1)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    T_audio = number of frames determined by hop_length
-"""
+processor = Wav2Vec2Processor.from_pretrained("facebook/hubert-large-ls960-ft")
+model = HubertModel.from_pretrained("facebook/hubert-large-ls960-ft").to(device)
 
-def extract_audio_features(audio_path, target_sr=16000, max_seconds=None):
-    try:
-        y, sr = sf.read(audio_path, dtype='float32')
-    except Exception:
-        return np.zeros((1, 42), dtype=np.float32)
+model.eval()
 
-    if y.ndim > 1:
-        y = np.mean(y, axis=1)
+def extract_audio_features(waveform, sampling_rate, target_sr=16000, max_seconds=None,):
 
+    # Convert to tensor
+    if not isinstance(waveform, torch.Tensor):
+        waveform = torch.tensor(waveform, dtype=torch.float32)
+    else:
+        waveform = waveform.float()
+
+    # Stereo to mono if necessary
+    if waveform.ndim > 1:
+        waveform = waveform.mean(dim=-1)
+
+    # Optional truncation
     if max_seconds is not None:
-        y = y[:int(max_seconds * sr)]
+        waveform = waveform[: int(max_seconds * sampling_rate)]
 
-    if sr != target_sr:
-        y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
-        sr = target_sr
+    # Resample if needed
+    if sampling_rate != target_sr:
+        waveform = torchaudio.functional.resample(waveform, sampling_rate, target_sr,)
 
-    hop_length = 512
-    n_mfcc = 20
-    
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc, hop_length=hop_length)
-    mfcc_delta = librosa.feature.delta(mfcc)
+    # Per-sample normalization
+    waveform = (waveform - waveform.mean()) / (waveform.std() + 1e-7)
 
-    energy = librosa.feature.rms(y=y, hop_length=hop_length)
-    energy = np.log(energy + 1e-6)
+    # Processor
+    inputs = processor(waveform.numpy(), sampling_rate=target_sr, return_tensors="pt",)
+    input_values = inputs.input_values.to(device)
 
-    spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)
-    spectral_centroid = np.log(spectral_centroid + 1e-6)  
-    
-    T = min(mfcc.shape[1], mfcc_delta.shape[1], energy.shape[1], spectral_centroid.shape[1])
+    # Forward pass
+    with torch.no_grad():
+        outputs = model(input_values)
 
-    mfcc = mfcc[:, :T]
-    mfcc_delta = mfcc_delta[:, :T]
-    energy = energy[:, :T]
-    spectral_centroid = spectral_centroid[:, :T]
+    # [T, hidden_size]
+    return outputs.last_hidden_state.squeeze(0).cpu()
 
-    # VAD Detection
-    energy_vals = energy[0]
-    threshold = np.percentile(energy_vals, 20)
-    speech_mask = energy_vals > threshold 
-    if speech_mask.sum() < 10:
-        speech_mask[:] = True
-
-    energy = np.convolve(energy_vals, np.ones(3)/3, mode='same')[None, :]
-
-    stacked_features = np.vstack([
-        mfcc, 
-        mfcc_delta, 
-        energy,
-        spectral_centroid
-    ]) # shape (42, T)
-
-    stacked_features = stacked_features * speech_mask
-
-    features = stacked_features.T.astype(np.float32) # (T_audio, 42)
-
-    return features
+def prepare_audio_features(waveform, sampling_rate):
+    return extract_audio_features(waveform, sampling_rate)

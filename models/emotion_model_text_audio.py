@@ -16,8 +16,8 @@ class EmotionPADModelTA(nn.Module):
 
         self.fusion = CrossModalTransformer(
             d_model=d_model,
-            nhead=8,
-            num_layers=4,
+            nhead=4,
+            num_layers=2,
             dropout=0.2
         )
 
@@ -26,17 +26,14 @@ class EmotionPADModelTA(nn.Module):
         self.pad_regressor = PADRegressors(d_model=d_model, hidden_dim=256)
 
     def forward(self, text, audio):
-        device = next(self.parameters()).device
 
         text_embedding = self.text_encoder(text)     # (B, 512)
         audio_embedding = self.audio_encoder(audio)  # (B, 512)
 
-        print("Embedding stds:", text_embedding.std(), audio_embedding.std())
-
-        # Noise injection (keep this, it's good)
+        # Noise injection for robustness
         if self.training:
-            text_embedding = text_embedding + 0.01 * torch.randn_like(text_embedding)
-            audio_embedding = audio_embedding + 0.01 * torch.randn_like(audio_embedding)
+            text_embedding = text_embedding + 0.005 * torch.randn_like(text_embedding)
+            audio_embedding = audio_embedding + 0.005 * torch.randn_like(audio_embedding)
 
         # Only 2 modalities now, but still use the same fusion model to learn cross-modal interactions
         embeddings = torch.stack(
@@ -45,8 +42,8 @@ class EmotionPADModelTA(nn.Module):
         )  # (B, 2, 512)
 
         fused_embedding = self.fusion(embeddings)
-        print(fused_embedding.std())
 
+        # Additional noise injection in training
         if self.training:
             fused_embedding = fused_embedding + 0.01 * torch.randn_like(fused_embedding)
 

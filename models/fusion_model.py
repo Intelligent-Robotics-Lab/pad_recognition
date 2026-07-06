@@ -12,17 +12,21 @@ class CrossModalTransformer(nn.Module):
             activation='gelu',
             batch_first=True,
         )
+
         self.transformer = nn.TransformerEncoder(
             encoder_layer,
             num_layers=num_layers
         )
 
-        # Learned pooling instead of mean pooling
         self.attn_pool = nn.Linear(d_model, 1)
 
     def forward(self, embeddings):
-        x = self.transformer(embeddings)  # perform cross-modal attention
-        weights = torch.softmax(self.attn_pool(x), dim=1)  # learn to weight modalities differently (B, 3, 1)
-        fused = (weights * x).sum(dim=1)   # (B, d_model)
-        
-        return fused
+        # Embeddings: [B, 2, 512]
+
+        x = nn.functional.layer_norm(embeddings, embeddings.shape[-1:])
+
+        x = self.transformer(x)
+
+        weights = torch.softmax(self.attn_pool(x), dim=1)
+
+        return (weights * x).sum(dim=1)
