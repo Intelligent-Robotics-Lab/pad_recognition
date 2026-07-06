@@ -5,7 +5,7 @@ from transformers import HubertModel, Wav2Vec2Processor
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 processor = Wav2Vec2Processor.from_pretrained("facebook/hubert-large-ls960-ft")
-model = HubertModel.from_pretrained("facebook/hubert-large-ls960-ft").to(device)
+model = HubertModel.from_pretrained("facebook/hubert-large-ls960-ft", use_safetensors=True,).to(device)
 
 model.eval()
 

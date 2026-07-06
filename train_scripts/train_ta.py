@@ -1,3 +1,7 @@
+"""
+Train script to test the audio and video modalaties together using the IEMOCAP dataset.
+"""
+
 import os
 import random
 import torch

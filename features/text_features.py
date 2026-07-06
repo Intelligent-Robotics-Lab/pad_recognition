@@ -1,11 +1,11 @@
 import torch
-from transformers import AutoTokenizer, AutoModel, pipeline
+from transformers import AutoTokenizer, AutoModel
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Using roberta-large model (stronger than BERT-base)
 tokenizer = AutoTokenizer.from_pretrained("roberta-large")
-model = AutoModel.from_pretrained("roberta-large").to(device)
+model = AutoModel.from_pretrained("roberta-large", use_safetensors=True).to(device)
 model.eval()
 
 def extract_text_features(text: str) -> torch.tensor:

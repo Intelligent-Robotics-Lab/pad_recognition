@@ -4,6 +4,7 @@ soundfile
 torch
 torchaudio
 transformers
+datasets
 face_alignment
 opencv-python
 fer==22.4.0
