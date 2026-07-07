@@ -68,7 +68,7 @@ def ccc_score(pred, target):
     cov = ((pred - pred_mean) * (target - target_mean)).mean(dim=0)
 
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
-    return ccc.mean().item()
+    return ccc, ccc.mean().item()
 
 def ccc_loss(pred, target):
     pred = torch.nan_to_num(pred)
@@ -146,11 +146,17 @@ def evaluate(model, indices, name="VAL"):
     preds_all = torch.cat(preds_all, dim=0)
     targets_all = torch.cat(targets_all, dim=0)
 
-    score = ccc_score(preds_all, targets_all)
-    print(f"{name} CCC: {score:.4f}")
+    ccc, avg = ccc_score(preds_all, targets_all)
+    print(
+        f"{name} CCC | "
+        f"P: {ccc[0]:.4f}  "
+        f"A: {ccc[1]:.4f}  "
+        f"D: {ccc[2]:.4f}  "
+        f"Avg: {avg:.4f}"
+    )
 
     model.train()
-    return score
+    return avg
 
 
 best_val_ccc = -float("inf")
@@ -164,6 +170,25 @@ for epoch in range(num_epochs):
 
     for i, idx in enumerate(train_idx):
         sample = ds[idx]
+
+        if epoch == 0 and i == 0:
+            print("n\ First training sample")
+
+            if MODALITY == "text":
+                print("Transcript")
+                print(sample["transcription"])
+
+            elif MODALITY == "audio":
+                waveform, sr = sf.read(BytesIO(sample["audio"]["bytes"]))
+                print(f"Audio: {len(waveform)} samples @ {sr} Hz")
+                print("First 10 waveform values:", waveform[:10])
+
+            print("Target:", [
+                sample["EmoVal"],
+                sample["EmoAct"],
+                sample["EmoDom"]
+            ])
+
         target = torch.tensor(
             [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
             dtype=torch.float32,
