@@ -150,6 +150,4 @@ for i, dim in enumerate(dims):
     print(f"RMSE     : {rmse(y_true, y_pred):.4f}")
     print(f"MAE      : {mae(y_true, y_pred):.4f}")
 
-print("\n" + "-" * 55)
 print(f"Average CCC : {np.mean(ccc_scores):.4f}")
-print("-" * 55)

@@ -31,8 +31,46 @@ model = EmotionPADModelTA(
     d_model=512
 ).to(device)
 
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+# Load pretrained weights from unimodal encoders (train_ind.py file)
+text_checkpoint = torch.load("saved_models/best_text_model.pth", map_location=device)
+
+audio_checkpoint = torch.load("saved_models/best_audio_model.pth", map_location=device)
+
+# Will update the logic in train_ind.py 
+text_encoder_state = {
+    k.replace("encoder.", ""): v
+    for k, v in text_checkpoint.items()
+    if k.startswith("encoder.")
+}
+
+audio_encoder_state = {
+    k.replace("encoder.", ""): v
+    for k, v in audio_checkpoint.items()
+    if k.startswith("encoder.")
+}
+
+model.text_encoder.load_state_dict(text_encoder_state)
+model.audio_encoder.load_state_dict(audio_encoder_state)
+
+print("Loaded pretrained encoders.")
+
+# Immediately freeze the encoders so their weights are saved
+for param in model.text_encoder.parameters():
+    param.requires_grad = False
+
+for param in model.audio_encoder.parameters():
+    param.requires_grad = False
+
+# Now only the fusion layer and PAD regressor will update
+optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
 loss_fn = nn.SmoothL1Loss(reduction="none")
+
+# Verify the frozen paramters
+print("\nTrainable Paramters:")
+
+for name, param in model.named_parameters():
+    if param.requires_grad:
+        print(name)
 
 # CCCs for evaluation only
 @torch.no_grad()
@@ -40,13 +78,13 @@ def ccc_score(pred, target):
     pred_mean = pred.mean(dim=0)
     target_mean = target.mean(dim=0)
 
-    pred_var = pred.var(dim=0)
-    target_var = target.var(dim=0)
+    pred_var = pred.var(dim=0, unbiased=False) + 1e-6
+    target_var = target.var(dim=0, unbiased=False) + 1e-6
 
     cov = ((pred - pred_mean) * (target - target_mean)).mean(dim=0)
 
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
-    return ccc.mean().item()
+    return ccc, ccc.mean().item()
 
 print("Loading IEMOCAP...")
 ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
@@ -104,12 +142,18 @@ def evaluate(model, indices, name="VAL"):
     preds_all = torch.cat(preds_all, dim=0)
     targets_all = torch.cat(targets_all, dim=0)
 
-    score = ccc_score(preds_all, targets_all)
+    ccc, avg = ccc_score(preds_all, targets_all)
 
-    print(f"{name} CCC: {score:.4f}")
+    print(
+        f"{name} CCC | "
+        f"P: {ccc[0]:.4f}  "
+        f"A: {ccc[1]:.4f}  "
+        f"D: {ccc[2]:.4f}  "
+        f"Avg: {avg:.4f}"
+    )
 
     model.train()
-    return score
+    return avg
 
 # Training loop
 best_val_ccc = -float("inf")

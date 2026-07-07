@@ -29,8 +29,6 @@ class EmotionPADModelTA(nn.Module):
 
         self.pad_regressor = PADRegressors(d_model=d_model, hidden_dim=256)
 
-        self.fusion_projection = nn.Linear(1024, 512)
-
     def forward(self, text, audio):
 
         # Normalize encoder outputs so both modalities have similar feature statistics
@@ -41,14 +39,14 @@ class EmotionPADModelTA(nn.Module):
         audio_embedding = audio_embedding + self.modality_embeddings[1]
 
         # Only 2 modalities now, but still use the same fusion model to learn cross-modal interactions
-        embeddings = torch.cat(
+        embeddings = torch.stack(
             [text_embedding, audio_embedding],
             dim=1
         )  # (B, 2, 512)
 
-        combined_embedding = self.fusion_projection(embeddings)
+        fused_embedding = self.fusion(embeddings)
 
-        p, a, d = self.pad_regressor(combined_embedding)
+        p, a, d = self.pad_regressor(fused_embedding)
 
         preds = torch.cat([p, a, d], dim=1) # (B, 3)
 
