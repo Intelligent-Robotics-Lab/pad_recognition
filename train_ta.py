@@ -4,12 +4,13 @@ Train script to test the audio and video modalaties together using the IEMOCAP d
 
 import os
 import random
+from io import BytesIO
+
+import soundfile as sf
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from datasets import load_dataset, Audio
-from io import BytesIO
-import soundfile as sf
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
@@ -32,7 +33,6 @@ model = EmotionPADModelTA(
 
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 loss_fn = nn.SmoothL1Loss(reduction="none")
-alpha = 1.5
 
 # CCCs for evaluation only
 @torch.no_grad()
@@ -45,15 +45,14 @@ def ccc_score(pred, target):
 
     cov = ((pred - pred_mean) * (target - target_mean)).mean(dim=0)
 
-    ccc = (2 * cov) / (
-        pred_var + target_var +
-        (pred_mean - target_mean).pow(2) + 1e-8
-    )
+    ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
     return ccc.mean().item()
 
 print("Loading IEMOCAP...")
 ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
 ds = ds.cast_column("audio", Audio(decode=False))
+
+print("Dataset size:", len(ds))
 
 # Compute the dataset mean to use in weighted loss function
 targets = torch.tensor(
@@ -62,8 +61,6 @@ targets = torch.tensor(
 )
 
 mu = targets.mean(dim=0).to(device) # shape (3,)
-
-print("Dataset size:", len(ds))
 
 # Split the dataset
 indices = list(range(len(ds)))
@@ -81,28 +78,25 @@ print(f"Train: {len(train_idx)} | Val: {len(val_idx)} | Test: {len(test_idx)}")
 # Evaluate function (CCCs)
 def evaluate(model, indices, name="VAL"):
     model.eval()
-
     preds_all = []
     targets_all = []
 
     with torch.no_grad():
         for i in indices:
             sample = ds[i]
-
             target = torch.tensor(
                 [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
                 dtype=torch.float32,
                 device=device
             ).unsqueeze(0)
 
-            text = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
+            text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
 
             waveform, sr = sf.read(BytesIO(sample["audio"]["bytes"]))
-            audio = extract_audio_features(waveform, sr)
-            audio = torch.tensor(audio, dtype=torch.float32).unsqueeze(0).to(device)
+            audio_feats = extract_audio_features(waveform, sr)
+            audio_feats = torch.tensor(audio_feats, dtype=torch.float32).unsqueeze(0).to(device)
 
-            p, a, d = model(text, audio)
-            pred = torch.cat([p, a, d], dim=1)
+            pred = model(text_feats, audio_feats)
 
             preds_all.append(pred)
             targets_all.append(target)
@@ -119,67 +113,52 @@ def evaluate(model, indices, name="VAL"):
 
 # Training loop
 best_val_ccc = -float("inf")
-
 os.makedirs("saved_models", exist_ok=True)
 
 for epoch in range(num_epochs):
     print(f"\nEpoch {epoch+1}/{num_epochs}")
-
     running_loss = 0.0
 
     random.shuffle(train_idx)
 
     for i, idx in enumerate(train_idx):
-
         sample = ds[idx]
-
         target = torch.tensor(
             [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
             dtype=torch.float32,
             device=device
         ).unsqueeze(0)
 
-        text_feats = extract_text_features(sample["transcription"])
-        text_feats = text_feats.unsqueeze(0).to(device)
+        text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
 
         waveform, sr = sf.read(BytesIO(sample["audio"]["bytes"]))
         audio_feats = extract_audio_features(waveform, sr)
         audio_feats = torch.tensor(audio_feats, dtype=torch.float32).unsqueeze(0).to(device)
 
         optimizer.zero_grad()
+        pred = model(text_feats, audio_feats)
 
-        p, a, d = model(text_feats, audio_feats)
-        pred = torch.cat([p, a, d], dim=1)
-
-        # Per-sample SmoothL1
-        per_sample_loss = loss_fn(pred, target).mean(dim=1) # (1,)
-
-        # Weighting based on distance from mean PAD
-        diff = torch.abs(target - mu)
-        sample_weight = 1.0 + alpha * diff.mean(dim=1)
-
-        loss = (sample_weight * per_sample_loss).mean()
+        mse = loss_fn(pred, target).mean(dim=1)
+        loss = mse.mean()
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        torch.nn.utils.clip_grad_value_(model.parameters(), 1.0)
         optimizer.step()
 
         running_loss += loss.item()
 
         if i % 200 == 0:
             print(f"\nSample {i}")
+
             print("Pred:", pred.detach().cpu())
-
-            print("Pred mean:", pred.mean(dim=0).detach().cpu())
-            print("Pred std:", pred.std(dim=0).detach().cpu())
-
             print("Target:", target.detach().cpu())
 
-            print("Target mean:", target.mean(dim=0).detach().cpu())
-            print("Target std:", target.std(dim=0).detach().cpu())
+            print("Pred PAD mean:", pred.mean(dim=1).item())
+            print("Target PAD mean:", target.mean(dim=1).item())
 
-            print("Pred range:", pred.min().item(), pred.max().item())
-            print("Target range:", target.min().item(), target.max().item())
+            print("Pred PAD std:", pred.squeeze(0).std().item())
+            print("Target PAD std:", target.squeeze(0).std().item())
 
             print("Loss:", loss.item())
 
@@ -195,5 +174,9 @@ for epoch in range(num_epochs):
     # Save the best model only
     if val_ccc > best_val_ccc:
         best_val_ccc = val_ccc
-        torch.save(model.state_dict(), "saved_models/iemocap_ta_best.pth")
+        save_path = os.path.join("saved_models", f"best_ta_model.pth")
+        torch.save(model.state_dict(), save_path)
         print("Saved new best model (based on VAL CCC)")
+
+print("Training complete.")
+print(f"Best validation CCC: {best_val_ccc:.4f}")

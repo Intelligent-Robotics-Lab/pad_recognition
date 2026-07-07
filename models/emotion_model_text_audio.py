@@ -14,6 +14,9 @@ class EmotionPADModelTA(nn.Module):
         self.text_encoder = TextTransformerEncoder(text_input_dim, d_model)
         self.audio_encoder = AudioProjectionEncoder(audio_input_dim, d_model)
 
+        self.text_norm = nn.LayerNorm(d_model)
+        self.audio_norm = nn.LayerNorm(d_model)
+
         self.fusion = CrossModalTransformer(
             d_model=d_model,
             nhead=4,
@@ -21,16 +24,21 @@ class EmotionPADModelTA(nn.Module):
             dropout=0.2
         )
 
-        self.dropout = nn.Dropout(0.2)
+        # Learnable embeddings to tell the transformer which modality each token is
+        self.modality_embeddings = nn.Parameter(torch.randn(2, d_model))
 
         self.pad_regressor = PADRegressors(d_model=d_model, hidden_dim=256)
 
     def forward(self, text, audio):
 
-        text_embedding = self.text_encoder(text)     # (B, 512)
-        audio_embedding = self.audio_encoder(audio)  # (B, 512)
+        # Normalize encoder outputs so both modalities have similar feature statistics
+        text_embedding = self.text_norm(self.text_encoder(text))     # (B, 512)
+        audio_embedding = self.audio_norm(self.audio_encoder(audio))  # (B, 512)
 
-        # Noise injection for robustness
+        text_embedding = text_embedding + self.modality_embeddings[0]
+        audio_embedding = audio_embedding + self.modality_embeddings[1]
+
+        # Noise injection for robustness (test with removed as well)
         if self.training:
             text_embedding = text_embedding + 0.005 * torch.randn_like(text_embedding)
             audio_embedding = audio_embedding + 0.005 * torch.randn_like(audio_embedding)
@@ -43,12 +51,11 @@ class EmotionPADModelTA(nn.Module):
 
         fused_embedding = self.fusion(embeddings)
 
-        # Additional noise injection in training
-        if self.training:
-            fused_embedding = fused_embedding + 0.01 * torch.randn_like(fused_embedding)
+        # Preserve useful unimodal information while adding learned fusion
+        combined_embedding = (fused_embedding + text_embedding + audio_embedding) / 3
 
-        fused_embedding = self.dropout(fused_embedding)
+        p, a, d = self.pad_regressor(combined_embedding)
 
-        p, a, d = self.pad_regressor(fused_embedding)
+        preds = torch.cat([p, a, d], dim=1) # (B, 3)
 
-        return p, a, d
+        return preds

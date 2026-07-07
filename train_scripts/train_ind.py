@@ -26,7 +26,6 @@ num_epochs = 10
 learning_rate = 3e-5
 seed = 42
 use_gru = False
-alpha = 1.5
 
 random.seed(seed)
 torch.manual_seed(seed)
@@ -57,7 +56,7 @@ model = SingleModalityModel(encoder=encoder, pad_regressor=regressor).to(device)
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 loss_fn = nn.SmoothL1Loss(reduction="none")
 
-
+# CCCs for evaluation only
 @torch.no_grad()
 def ccc_score(pred, target):
     pred_mean = pred.mean(dim=0)
@@ -123,7 +122,7 @@ test_idx = indices[val_split:]
 
 print(f"Train: {len(train_idx)} | Val: {len(val_idx)} | Test: {len(test_idx)}")
 
-
+# Evaluate function (CCCs)
 def evaluate(model, indices, name="VAL"):
     model.eval()
     preds_all = []
