@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 from models.encoders import TextTransformerEncoder, AudioProjectionEncoder
-from models.fusion_model import CrossModalTransformer
+from models.fusion import (MLPFusion, CrossModalTransformer)
 from models.pad_regressor import PADRegressors
 
 class EmotionPADModelTA(nn.Module):
     """
     Text + Audio only version for PAD prediction
     """
-    def __init__(self, text_input_dim, audio_input_dim, d_model=512):
+    def __init__(self, text_input_dim, audio_input_dim, d_model=512, fusion_type="mlp"):
         super().__init__()
 
         self.text_encoder = TextTransformerEncoder(text_input_dim, d_model)
@@ -20,12 +20,24 @@ class EmotionPADModelTA(nn.Module):
         # Learnable embeddings to tell the transformer which modality each token is
         self.modality_embeddings = nn.Parameter(torch.randn(2, d_model))
 
-        self.fusion = CrossModalTransformer(
-            d_model=d_model,
-            nhead=1,
-            num_layers=1,
-            dropout=0.1
-        )
+        if fusion_type == "mlp":
+
+            self.fusion = MLPFusion(
+                d_model=d_model,
+            )
+
+        elif fusion_type == "transformer":
+
+            self.fusion = CrossModalTransformer(
+                d_model=d_model,
+                nhead=1,
+                num_layers=1,
+                dropout=0.1
+            )
+
+        else:
+
+            raise ValueError(f"Unknown fusion type: {fusion_type}")
 
         self.pad_regressor = PADRegressors(d_model=d_model, hidden_dim=256)
 

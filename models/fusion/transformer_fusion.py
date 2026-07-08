@@ -11,9 +11,9 @@ class CrossModalTransformer(nn.Module):
         super().__init__()
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,            # dimension of each modality embedding
+            d_model=d_model,                # dimension of each modality embedding
             nhead=nhead,                    # number of attention heads
-            dim_feedforward=d_model,    # number of transformer encoder layers
+            dim_feedforward=d_model,        # number of transformer encoder layers
             dropout=dropout,                # dropout probability to prevent overfitting
             activation='gelu',
             batch_first=True,

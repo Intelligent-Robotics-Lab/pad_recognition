@@ -18,6 +18,8 @@ from models.emotion_model_text_audio import EmotionPADModelTA
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+FUSION_TYPE = "mlp"
+
 num_epochs = 10
 learning_rate = 1e-4
 seed = 42
@@ -28,7 +30,8 @@ torch.manual_seed(seed)
 model = EmotionPADModelTA(
     text_input_dim=1024,
     audio_input_dim=1024,
-    d_model=512
+    d_model=512,
+    fusion_type=FUSION_TYPE
 ).to(device)
 
 # Load pretrained weights from unimodal encoders (train_ind.py file)
@@ -236,7 +239,7 @@ for epoch in range(num_epochs):
         best_val_ccc = val_ccc
         epochs_without_improvement = 0
 
-        save_path = os.path.join("saved_models", f"best_ta_model.pth")
+        save_path = os.path.join("saved_models", f"best_ta_{FUSION_TYPE}.pth")
         torch.save(model.state_dict(), save_path)
 
         print(

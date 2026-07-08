@@ -17,6 +17,8 @@ from models.emotion_model_text_audio import EmotionPADModelTA
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+FUSION_TYPE = "mlp"
+
 SEED = 42
 
 random.seed(SEED)
@@ -25,10 +27,11 @@ torch.manual_seed(SEED)
 model = EmotionPADModelTA(
     text_input_dim=1024,
     audio_input_dim=1024,
-    d_model=512
+    d_model=512,
+    fusion_type=FUSION_TYPE
 ).to(device)
 
-checkpoint = "saved_models/best_ta_model.pth"
+checkpoint = f"saved_models/best_ta_{FUSION_TYPE}.pth"
 model.load_state_dict(torch.load(checkpoint, map_location=device))
 model.eval()
 
