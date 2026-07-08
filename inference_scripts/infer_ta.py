@@ -76,7 +76,9 @@ targets = []
 
 with torch.no_grad():
 
-    for sample in ds:
+    for idx in test_idx:
+
+        sample = ds[idx]
 
         target = np.array([
             sample["EmoVal"],

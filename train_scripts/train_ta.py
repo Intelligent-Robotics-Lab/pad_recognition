@@ -159,6 +159,10 @@ def evaluate(model, indices, name="VAL"):
 best_val_ccc = -float("inf")
 os.makedirs("saved_models", exist_ok=True)
 
+# Early stopping variables
+patience = 3
+epochs_without_improvement = 0
+
 for epoch in range(num_epochs):
     print(f"\nEpoch {epoch+1}/{num_epochs}")
     running_loss = 0.0
@@ -212,15 +216,29 @@ for epoch in range(num_epochs):
     # Validation with CCC
     val_ccc = evaluate(model, val_idx, "VAL")
 
-    # Optional test evaluation
-    test_ccc = evaluate(model, test_idx, "TEST")
+    min_delta = 1e-3
 
     # Save the best model only
-    if val_ccc > best_val_ccc:
+    if val_ccc > best_val_ccc + min_delta:
         best_val_ccc = val_ccc
+        epochs_without_improvement = 0
+
         save_path = os.path.join("saved_models", f"best_ta_model.pth")
         torch.save(model.state_dict(), save_path)
-        print("Saved new best model (based on VAL CCC)")
+
+        print(
+            f"Saved new best model "
+            f"(VAL CCC = {best_val_ccc:.4f})"
+        )
+    
+    else:
+        epochs_without_improvement += 1
+
+        print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
+
+        if epochs_without_improvement >= patience:
+            print("\nEarly stopping triggered.")
+            break
 
 print("Training complete.")
 print(f"Best validation CCC: {best_val_ccc:.4f}")

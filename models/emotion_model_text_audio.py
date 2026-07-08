@@ -17,15 +17,15 @@ class EmotionPADModelTA(nn.Module):
         self.text_norm = nn.LayerNorm(d_model)
         self.audio_norm = nn.LayerNorm(d_model)
 
-        self.fusion = CrossModalTransformer(
-            d_model=d_model,
-            nhead=4,
-            num_layers=2,
-            dropout=0.2
-        )
-
         # Learnable embeddings to tell the transformer which modality each token is
         self.modality_embeddings = nn.Parameter(torch.randn(2, d_model))
+
+        self.fusion = CrossModalTransformer(
+            d_model=d_model,
+            nhead=1,
+            num_layers=1,
+            dropout=0.1
+        )
 
         self.pad_regressor = PADRegressors(d_model=d_model, hidden_dim=256)
 
@@ -40,7 +40,7 @@ class EmotionPADModelTA(nn.Module):
 
         # Only 2 modalities now, but still use the same fusion model to learn cross-modal interactions
         embeddings = torch.stack(
-            [text_embedding, audio_embedding],
+            [text_embedding, audio_embedding], 
             dim=1
         )  # (B, 2, 512)
 
