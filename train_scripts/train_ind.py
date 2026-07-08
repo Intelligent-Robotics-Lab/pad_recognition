@@ -20,10 +20,10 @@ from models.single_modality_model import SingleModalityModel
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MODALITY = "audio"
+MODALITY = "text"
 
 num_epochs = 10
-learning_rate = 3e-5
+learning_rate = 1e-4
 seed = 42
 use_gru = False
 
@@ -97,6 +97,8 @@ def build_features(sample):
 
     return torch.tensor(feats, dtype=torch.float32).unsqueeze(0).to(device)
 
+def scale_pad(values):
+    return (values - 3.0) / 2.0
 
 print("Loading IEMOCAP...")
 ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
@@ -135,7 +137,11 @@ def evaluate(model, indices, name="VAL"):
                 [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
                 dtype=torch.float32,
                 device=device,
-            ).unsqueeze(0)
+            )
+
+            # Normalize outputs to the [-1, 1] scale
+            target = scale_pad(target)
+            target = target.unsqueeze(0)
 
             feats = build_features(sample)
             pred = model(feats)
@@ -161,6 +167,10 @@ def evaluate(model, indices, name="VAL"):
 
 best_val_ccc = -float("inf")
 os.makedirs("saved_models", exist_ok=True)
+
+# Early stopping variables
+patience = 3
+epochs_without_improvement = 0
 
 for epoch in range(num_epochs):
     print(f"\nEpoch {epoch + 1}/{num_epochs}")
@@ -193,7 +203,12 @@ for epoch in range(num_epochs):
             [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
             dtype=torch.float32,
             device=device,
-        ).unsqueeze(0)
+        )
+
+        # Normalize outputs to the [-1, 1] scale
+        target = scale_pad(target)
+
+        target = target.unsqueeze(0)
 
         feats = build_features(sample)
 
@@ -230,13 +245,28 @@ for epoch in range(num_epochs):
     print(f"\nEpoch {epoch + 1} Train Loss: {avg_loss:.4f}")
 
     val_ccc = evaluate(model, val_idx, "VAL")
-    evaluate(model, test_idx, "TEST")
 
-    if val_ccc > best_val_ccc:
+    min_delta = 1e-3
+
+    if val_ccc > best_val_ccc + min_delta:
         best_val_ccc = val_ccc
+        epochs_without_improvement = 0
+
         save_path = os.path.join("saved_models", f"best_{MODALITY}_model.pth")
         torch.save(model.state_dict(), save_path)
-        print(f"Saved new best model (VAL CCC): {save_path}")
+        
+        print(
+            f"Saved new best model "
+            f"(VAL CCC = {best_val_ccc:.4f})"
+        )
+
+    else:
+        epochs_without_improvement += 1
+        print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
+
+        if epochs_without_improvement >= patience:
+            print("\nEarly stopping triggered")
+            break
 
 print("Training complete.")
 print(f"Best validation CCC: {best_val_ccc:.4f}")

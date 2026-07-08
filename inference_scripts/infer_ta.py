@@ -1,6 +1,5 @@
 """
-Inference script for the Text + Audio PAD model.
-Matches train_ta.py behavior exactly.
+Inference script for the Text + Audio PAD model. Matches train_ta.py behavior exactly.
 """
 
 import os
@@ -85,6 +84,9 @@ with torch.no_grad():
             sample["EmoAct"],
             sample["EmoDom"]
         ])
+
+        # Normalize to the [-1, 1] range
+        target = (target - 3.0) / 2.0
 
         # Text
         text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)

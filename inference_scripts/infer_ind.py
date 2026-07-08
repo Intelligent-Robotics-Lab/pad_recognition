@@ -1,6 +1,5 @@
 """
-Inference script for single-modality PAD prediction using IEMOCAP.
-Matches train_single_modality.py exactly.
+Inference script for single-modality PAD prediction using IEMOCAP. Matches train_single_modality.py exactly.
 """
 
 import random
@@ -17,7 +16,7 @@ from models.emotion_model import EmotionPADModel
 from models.single_modality_model import SingleModalityModel
 
 
-MODALITY = "audio"
+MODALITY = "text"
 
 SEED = 42
 USE_GRU = False
@@ -118,6 +117,9 @@ with torch.no_grad():
             sample["EmoAct"],
             sample["EmoDom"]
         ])
+
+        # Normalize to the [-1, 1] range
+        target = (target - 3.0) / 2.0
 
         feats = build_features(sample)
         pred = model(feats)

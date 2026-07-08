@@ -19,7 +19,7 @@ from models.emotion_model_text_audio import EmotionPADModelTA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 num_epochs = 10
-learning_rate = 5e-4
+learning_rate = 1e-4
 seed = 42
 
 random.seed(seed)
@@ -86,6 +86,9 @@ def ccc_score(pred, target):
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
     return ccc, ccc.mean().item()
 
+def scale_pad(values):
+    return (values - 3.0) / 2.0
+
 print("Loading IEMOCAP...")
 ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
 ds = ds.cast_column("audio", Audio(decode=False))
@@ -126,7 +129,12 @@ def evaluate(model, indices, name="VAL"):
                 [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
                 dtype=torch.float32,
                 device=device
-            ).unsqueeze(0)
+            )
+
+            # Normalize to the -1 to 1 scale
+            target = scale_pad(target)
+
+            target = target.unsqueeze(0)
 
             text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
 
@@ -175,7 +183,12 @@ for epoch in range(num_epochs):
             [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
             dtype=torch.float32,
             device=device
-        ).unsqueeze(0)
+        )
+
+        # Normalize to the -1 to 1 scale
+        target = scale_pad(target)
+
+        target = target.unsqueeze(0)
 
         text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
 
@@ -233,7 +246,6 @@ for epoch in range(num_epochs):
     
     else:
         epochs_without_improvement += 1
-
         print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
 
         if epochs_without_improvement >= patience:
