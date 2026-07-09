@@ -31,8 +31,9 @@ class PADRegressors(nn.Module):
 
         x = self.shared(x)
 
-        p = self.pleasure_head(x)
-        a = self.arousal_head(x)
-        d = self.dominance_head(x)
+        # Constrain the predictions to [-1, 1] using tanh
+        p = torch.tanh(self.pleasure_head(x))
+        a = torch.tanh(self.arousal_head(x))
+        d = torch.tanh(self.dominance_head(x))
 
         return p, a, d

@@ -14,16 +14,20 @@ from datasets import Audio, load_dataset
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from models.emotion_model import EmotionPADModel
+
+from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder)
+
+from models.pad_regressor import PADRegressors
+
 from models.single_modality_model import SingleModalityModel
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MODALITY = "audio"
+MODALITY = "text"
 
 num_epochs = 10
-learning_rate = 3e-5
+learning_rate = 1e-4
 seed = 42
 use_gru = False
 
@@ -32,25 +36,17 @@ torch.manual_seed(seed)
 
 print(f"Training single-modality PAD regressor on {MODALITY} features")
 
-# Full model to pull in the encoder sub-modules (will change in future iterations)
-full_model = EmotionPADModel(
-    text_input_dim=1024,
-    audio_input_dim=1024,
-    video_input_dim=7,
-    d_model=512,
-    use_gru=use_gru,
-).to(device)
-
 if MODALITY == "text":
-    encoder = full_model.text_encoder
-elif MODALITY == "audio":
-    encoder = full_model.audio_encoder
-elif MODALITY == "video":
-    encoder = full_model.video_encoder
-else:
-    raise ValueError("Invalid modality")
+    encoder = TextTransformerEncoder(hidden_dim=1024, d_model=512,)
 
-regressor = full_model.pad_regressor
+elif MODALITY == "audio":
+    encoder = AudioProjectionEncoder(input_dim=1024, d_model=512,)
+
+else:
+    raise ValueError("Only text and audio are currently supported.")
+
+regressor = PADRegressors(d_model=512, hidden_dim=256,)
+
 model = SingleModalityModel(encoder=encoder, pad_regressor=regressor).to(device)
 
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -68,7 +64,7 @@ def ccc_score(pred, target):
     cov = ((pred - pred_mean) * (target - target_mean)).mean(dim=0)
 
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
-    return ccc.mean().item()
+    return ccc, ccc.mean().item()
 
 def ccc_loss(pred, target):
     pred = torch.nan_to_num(pred)
@@ -97,6 +93,8 @@ def build_features(sample):
 
     return torch.tensor(feats, dtype=torch.float32).unsqueeze(0).to(device)
 
+def scale_pad(values):
+    return (values - 3.0) / 2.0
 
 print("Loading IEMOCAP...")
 ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
@@ -135,7 +133,11 @@ def evaluate(model, indices, name="VAL"):
                 [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
                 dtype=torch.float32,
                 device=device,
-            ).unsqueeze(0)
+            )
+
+            # Normalize outputs to the [-1, 1] scale
+            target = scale_pad(target)
+            target = target.unsqueeze(0)
 
             feats = build_features(sample)
             pred = model(feats)
@@ -146,15 +148,25 @@ def evaluate(model, indices, name="VAL"):
     preds_all = torch.cat(preds_all, dim=0)
     targets_all = torch.cat(targets_all, dim=0)
 
-    score = ccc_score(preds_all, targets_all)
-    print(f"{name} CCC: {score:.4f}")
+    ccc, avg = ccc_score(preds_all, targets_all)
+    print(
+        f"{name} CCC | "
+        f"P: {ccc[0]:.4f}  "
+        f"A: {ccc[1]:.4f}  "
+        f"D: {ccc[2]:.4f}  "
+        f"Avg: {avg:.4f}"
+    )
 
     model.train()
-    return score
+    return avg
 
 
 best_val_ccc = -float("inf")
 os.makedirs("saved_models", exist_ok=True)
+
+# Early stopping variables
+patience = 3
+epochs_without_improvement = 0
 
 for epoch in range(num_epochs):
     print(f"\nEpoch {epoch + 1}/{num_epochs}")
@@ -164,11 +176,35 @@ for epoch in range(num_epochs):
 
     for i, idx in enumerate(train_idx):
         sample = ds[idx]
+
+        if epoch == 0 and i == 0:
+            print("n\ First training sample")
+
+            if MODALITY == "text":
+                print("Transcript")
+                print(sample["transcription"])
+
+            elif MODALITY == "audio":
+                waveform, sr = sf.read(BytesIO(sample["audio"]["bytes"]))
+                print(f"Audio: {len(waveform)} samples @ {sr} Hz")
+                print("First 10 waveform values:", waveform[:10])
+
+            print("Target:", [
+                sample["EmoVal"],
+                sample["EmoAct"],
+                sample["EmoDom"]
+            ])
+
         target = torch.tensor(
             [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
             dtype=torch.float32,
             device=device,
-        ).unsqueeze(0)
+        )
+
+        # Normalize outputs to the [-1, 1] scale
+        target = scale_pad(target)
+
+        target = target.unsqueeze(0)
 
         feats = build_features(sample)
 
@@ -205,13 +241,28 @@ for epoch in range(num_epochs):
     print(f"\nEpoch {epoch + 1} Train Loss: {avg_loss:.4f}")
 
     val_ccc = evaluate(model, val_idx, "VAL")
-    evaluate(model, test_idx, "TEST")
 
-    if val_ccc > best_val_ccc:
+    min_delta = 1e-3
+
+    if val_ccc > best_val_ccc + min_delta:
         best_val_ccc = val_ccc
+        epochs_without_improvement = 0
+
         save_path = os.path.join("saved_models", f"best_{MODALITY}_model.pth")
         torch.save(model.state_dict(), save_path)
-        print(f"Saved new best model (VAL CCC): {save_path}")
+        
+        print(
+            f"Saved new best model "
+            f"(VAL CCC = {best_val_ccc:.4f})"
+        )
+
+    else:
+        epochs_without_improvement += 1
+        print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
+
+        if epochs_without_improvement >= patience:
+            print("\nEarly stopping triggered")
+            break
 
 print("Training complete.")
 print(f"Best validation CCC: {best_val_ccc:.4f}")

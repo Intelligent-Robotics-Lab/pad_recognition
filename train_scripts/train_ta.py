@@ -18,8 +18,10 @@ from models.emotion_model_text_audio import EmotionPADModelTA
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+FUSION_TYPE = "mlp"
+
 num_epochs = 10
-learning_rate = 5e-4
+learning_rate = 1e-4
 seed = 42
 
 random.seed(seed)
@@ -28,11 +30,50 @@ torch.manual_seed(seed)
 model = EmotionPADModelTA(
     text_input_dim=1024,
     audio_input_dim=1024,
-    d_model=512
+    d_model=512,
+    fusion_type=FUSION_TYPE
 ).to(device)
 
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+# Load pretrained weights from unimodal encoders (train_ind.py file)
+text_checkpoint = torch.load("saved_models/best_text_model.pth", map_location=device)
+
+audio_checkpoint = torch.load("saved_models/best_audio_model.pth", map_location=device)
+
+# Will update the logic in train_ind.py 
+text_encoder_state = {
+    k.replace("encoder.", ""): v
+    for k, v in text_checkpoint.items()
+    if k.startswith("encoder.")
+}
+
+audio_encoder_state = {
+    k.replace("encoder.", ""): v
+    for k, v in audio_checkpoint.items()
+    if k.startswith("encoder.")
+}
+
+model.text_encoder.load_state_dict(text_encoder_state)
+model.audio_encoder.load_state_dict(audio_encoder_state)
+
+print("Loaded pretrained encoders.")
+
+# Immediately freeze the encoders so their weights are saved
+for param in model.text_encoder.parameters():
+    param.requires_grad = False
+
+for param in model.audio_encoder.parameters():
+    param.requires_grad = False
+
+# Now only the fusion layer and PAD regressor will update
+optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
 loss_fn = nn.SmoothL1Loss(reduction="none")
+
+# Verify the frozen paramters
+print("\nTrainable Paramters:")
+
+for name, param in model.named_parameters():
+    if param.requires_grad:
+        print(name)
 
 # CCCs for evaluation only
 @torch.no_grad()
@@ -40,13 +81,16 @@ def ccc_score(pred, target):
     pred_mean = pred.mean(dim=0)
     target_mean = target.mean(dim=0)
 
-    pred_var = pred.var(dim=0)
-    target_var = target.var(dim=0)
+    pred_var = pred.var(dim=0, unbiased=False) + 1e-6
+    target_var = target.var(dim=0, unbiased=False) + 1e-6
 
     cov = ((pred - pred_mean) * (target - target_mean)).mean(dim=0)
 
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
-    return ccc.mean().item()
+    return ccc, ccc.mean().item()
+
+def scale_pad(values):
+    return (values - 3.0) / 2.0
 
 print("Loading IEMOCAP...")
 ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
@@ -88,7 +132,12 @@ def evaluate(model, indices, name="VAL"):
                 [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
                 dtype=torch.float32,
                 device=device
-            ).unsqueeze(0)
+            )
+
+            # Normalize to the -1 to 1 scale
+            target = scale_pad(target)
+
+            target = target.unsqueeze(0)
 
             text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
 
@@ -104,16 +153,26 @@ def evaluate(model, indices, name="VAL"):
     preds_all = torch.cat(preds_all, dim=0)
     targets_all = torch.cat(targets_all, dim=0)
 
-    score = ccc_score(preds_all, targets_all)
+    ccc, avg = ccc_score(preds_all, targets_all)
 
-    print(f"{name} CCC: {score:.4f}")
+    print(
+        f"{name} CCC | "
+        f"P: {ccc[0]:.4f}  "
+        f"A: {ccc[1]:.4f}  "
+        f"D: {ccc[2]:.4f}  "
+        f"Avg: {avg:.4f}"
+    )
 
     model.train()
-    return score
+    return avg
 
 # Training loop
 best_val_ccc = -float("inf")
 os.makedirs("saved_models", exist_ok=True)
+
+# Early stopping variables
+patience = 3
+epochs_without_improvement = 0
 
 for epoch in range(num_epochs):
     print(f"\nEpoch {epoch+1}/{num_epochs}")
@@ -127,7 +186,12 @@ for epoch in range(num_epochs):
             [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
             dtype=torch.float32,
             device=device
-        ).unsqueeze(0)
+        )
+
+        # Normalize to the -1 to 1 scale
+        target = scale_pad(target)
+
+        target = target.unsqueeze(0)
 
         text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
 
@@ -168,15 +232,28 @@ for epoch in range(num_epochs):
     # Validation with CCC
     val_ccc = evaluate(model, val_idx, "VAL")
 
-    # Optional test evaluation
-    test_ccc = evaluate(model, test_idx, "TEST")
+    min_delta = 1e-3
 
     # Save the best model only
-    if val_ccc > best_val_ccc:
+    if val_ccc > best_val_ccc + min_delta:
         best_val_ccc = val_ccc
-        save_path = os.path.join("saved_models", f"best_ta_model.pth")
+        epochs_without_improvement = 0
+
+        save_path = os.path.join("saved_models", f"best_ta_{FUSION_TYPE}.pth")
         torch.save(model.state_dict(), save_path)
-        print("Saved new best model (based on VAL CCC)")
+
+        print(
+            f"Saved new best model "
+            f"(VAL CCC = {best_val_ccc:.4f})"
+        )
+    
+    else:
+        epochs_without_improvement += 1
+        print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
+
+        if epochs_without_improvement >= patience:
+            print("\nEarly stopping triggered.")
+            break
 
 print("Training complete.")
 print(f"Best validation CCC: {best_val_ccc:.4f}")

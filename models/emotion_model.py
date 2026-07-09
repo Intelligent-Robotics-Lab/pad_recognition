@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from models.encoders import TextTransformerEncoder, AudioProjectionEncoder, VideoProjectionEncoder
-from models.fusion_model import CrossModalTransformer
+from models.fusion import (MLPFusion, CrossModalTransformer)
 from models.pad_regressor import PADRegressors
 
 class EmotionPADModel(nn.Module):
