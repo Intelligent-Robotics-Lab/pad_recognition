@@ -12,11 +12,14 @@ from datasets import load_dataset, Audio
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from models.emotion_model import EmotionPADModel
+
+from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder)
+from models.pad_regressor import PADRegressors
+
 from models.single_modality_model import SingleModalityModel
 
 
-MODALITY = "text"
+MODALITY = "audio"
 
 SEED = 42
 USE_GRU = False
@@ -26,28 +29,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 random.seed(SEED)
 torch.manual_seed(SEED)
 
-# Plan to update this implementation in future iterations
-full_model = EmotionPADModel(
-    text_input_dim=1024,
-    audio_input_dim=1024,
-    video_input_dim=7,
-    d_model=512,
-    use_gru=USE_GRU,
-).to(device)
-
 if MODALITY == "text":
-    encoder = full_model.text_encoder
+    encoder = TextTransformerEncoder(hidden_dim=1024, d_model=512,)
+
 elif MODALITY == "audio":
-    encoder = full_model.audio_encoder
+    encoder = AudioProjectionEncoder(input_dim=1024, d_model=512,)
+
 else:
     raise ValueError("Only text and audio are currently supported.")
 
-regressor = full_model.pad_regressor
+regressor = PADRegressors(d_model=512, hidden_dim=256,)
 
-model = SingleModalityModel(
-    encoder=encoder,
-    pad_regressor=regressor
-).to(device)
+model = SingleModalityModel(encoder=encoder, pad_regressor=regressor).to(device)
 
 checkpoint = f"saved_models/best_{MODALITY}_model.pth"
 model.load_state_dict(torch.load(checkpoint, map_location=device))

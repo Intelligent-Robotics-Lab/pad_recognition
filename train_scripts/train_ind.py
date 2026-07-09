@@ -14,7 +14,11 @@ from datasets import Audio, load_dataset
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from models.emotion_model import EmotionPADModel
+
+from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder)
+
+from models.pad_regressor import PADRegressors
+
 from models.single_modality_model import SingleModalityModel
 
 
@@ -32,25 +36,17 @@ torch.manual_seed(seed)
 
 print(f"Training single-modality PAD regressor on {MODALITY} features")
 
-# Full model to pull in the encoder sub-modules (will change in future iterations)
-full_model = EmotionPADModel(
-    text_input_dim=1024,
-    audio_input_dim=1024,
-    video_input_dim=7,
-    d_model=512,
-    use_gru=use_gru,
-).to(device)
-
 if MODALITY == "text":
-    encoder = full_model.text_encoder
-elif MODALITY == "audio":
-    encoder = full_model.audio_encoder
-elif MODALITY == "video":
-    encoder = full_model.video_encoder
-else:
-    raise ValueError("Invalid modality")
+    encoder = TextTransformerEncoder(hidden_dim=1024, d_model=512,)
 
-regressor = full_model.pad_regressor
+elif MODALITY == "audio":
+    encoder = AudioProjectionEncoder(input_dim=1024, d_model=512,)
+
+else:
+    raise ValueError("Only text and audio are currently supported.")
+
+regressor = PADRegressors(d_model=512, hidden_dim=256,)
+
 model = SingleModalityModel(encoder=encoder, pad_regressor=regressor).to(device)
 
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)

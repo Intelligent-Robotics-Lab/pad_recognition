@@ -17,7 +17,7 @@ from models.emotion_model_text_audio import EmotionPADModelTA
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-FUSION_TYPE = "mlp"
+FUSION_TYPE = "transformer"
 
 SEED = 42
 
