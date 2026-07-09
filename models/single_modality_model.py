@@ -13,14 +13,8 @@ class SingleModalityModel(nn.Module):
     def forward(self, x):
         embedding = self.encoder(x)  # (B, 512)
 
-        # Debug: print embedding stats during training
-        if self.training:
-            print("Embedding stats -> mean:",
-                  embedding.mean().item(),
-                  "std:",
-                  embedding.std().item())
-
         p, a, d = self.pad_regressor(embedding)
+        
         preds = torch.cat([p, a, d], dim=1)  # (B, 3)
 
         return preds

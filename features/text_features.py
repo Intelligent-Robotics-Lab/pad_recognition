@@ -1,25 +1,28 @@
-from transformers import AutoTokenizer, AutoModel, pipeline
 import torch
+from transformers import AutoTokenizer, AutoModel
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-embedding_tokenizer = AutoTokenizer.from_pretrained("roberta-large")
-embedding_model = AutoModel.from_pretrained("roberta-large").to(device)
-embedding_model.eval()
+# Using roberta-large model (stronger than BERT-base)
+tokenizer = AutoTokenizer.from_pretrained("roberta-large")
+model = AutoModel.from_pretrained("roberta-large", use_safetensors=True).to(device)
+model.eval()
 
-def extract_text_features(text):
+def extract_text_features(text: str) -> torch.tensor:
+    # Returns: Tensor [T, 1024]
     if not isinstance(text, str):
         text = str(text)
 
-    inputs = embedding_tokenizer(
+    # Extract token-level embeddings
+    inputs = tokenizer(
         text,
         return_tensors="pt",
         truncation=True,
-        padding=True
+        padding=False
     ).to(device)
 
     with torch.no_grad():
-        outputs = embedding_model(**inputs)
+        outputs = model(**inputs)
 
     return outputs.last_hidden_state.squeeze(0).cpu()
 

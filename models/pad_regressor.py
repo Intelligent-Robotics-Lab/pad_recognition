@@ -5,64 +5,35 @@ class PADRegressors(nn.Module):
     def __init__(self, d_model=512, hidden_dim=None):
         super().__init__()
 
-        if hidden_dim is None:
+        if hidden_dim is None: 
             # Simple linear heads
             self.pleasure_head = nn.Linear(d_model, 1)
             self.arousal_head  = nn.Linear(d_model, 1)
             self.dominance_head = nn.Linear(d_model, 1)
-        else:
-            # More expressive MLP heads
-            self.pleasure_head = nn.Sequential(
-                nn.Linear(d_model, 512),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(512, 256),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(256, 128),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(128, 1)
-            )
-            self.arousal_head = nn.Sequential(
-                nn.Linear(d_model, 512),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(512, 256),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(256, 128),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(128, 1)
-            )
-            self.dominance_head = nn.Sequential(
-                nn.Linear(d_model, 512),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(512, 256),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(256, 128),
-                nn.GELU(),
-                nn.Dropout(0.2),
-                nn.Linear(128, 1)
-            )
-            
-            # # Look into replacement version seen below here: try and compare the differences
-            # self.head = nn.Sequential(
-            #     nn.Linear(d_model, 256),
-            #     nn.GELU(),
-            #     nn.Dropout(0.2),
-            #     nn.Linear(256, 128),
-            #     nn.GELU(),
-            #     nn.Linear(128, 3),
-            #     nn.Tanh()
-            # )
 
-    def forward(self, fused_embedding: torch.Tensor):
-        p = self.pleasure_head(fused_embedding)
-        a = self.arousal_head(fused_embedding)
-        d = self.dominance_head(fused_embedding)
+        else:
+            # Expressive MLPs
+            self.shared = nn.Sequential(
+                nn.Linear(d_model, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.GELU()
+            )
+
+            # Sepearate heads
+            self.pleasure_head = nn.Linear(hidden_dim, 1)
+            self.arousal_head = nn.Linear(hidden_dim, 1)
+            self.dominance_head = nn.Linear(hidden_dim, 1)
+
+
+    def forward(self, x):
+
+        x = self.shared(x)
+
+        # Constrain the predictions to [-1, 1] using tanh
+        p = torch.tanh(self.pleasure_head(x))
+        a = torch.tanh(self.arousal_head(x))
+        d = torch.tanh(self.dominance_head(x))
 
         return p, a, d
