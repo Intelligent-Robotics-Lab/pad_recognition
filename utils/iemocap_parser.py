@@ -4,7 +4,7 @@ import re
 
 class IEMOCAPParser:
     """Parser converts raw IEMOCAP data into usable rows for the CSV file"""
-    
+
     def __init__(self, root):
         self.root = Path(root)
 
@@ -75,7 +75,7 @@ class IEMOCAPParser:
             for line in f:
 
                 match = re.match(
-                    r"(Ses\d+_\w+_\w+\d+)\s+\[.*\]:\s+(.*)",
+                    r"(Ses\d+[MF]_\w+_\w+\d+)\s+\[.*\]:\s+(.*)",
                     line
                 )
 
@@ -95,25 +95,22 @@ class IEMOCAPParser:
             for line in f:
 
                 match = re.match(
-                    r"\[.*\]\s+(Ses\d+_\w+_\w+\d+)\s+(\w+)\s+\[(.*),(.*),(.*)\]",
+                    r"\[.*\]\s+(Ses\d+[MF]_\w+_\w+\d+)\s+(\w+)\s+\[([\d.]+),\s*([\d.]+),\s*([\d.]+)\]",
                     line
                 )
 
                 if match:
+
                     utt_id = match.group(1)
 
                     data[utt_id] = {
                         "emotion": match.group(2),
 
-                        # convert from a [1, 5] scale to a [-1, 1]
-                        "valence":
-                            (float(match.group(3)) - 3) / 2,
+                        "valence": max(-1, min(1, (float(match.group(3)) - 3) / 2)),
 
-                        "arousal":
-                            (float(match.group(4)) - 3) / 2,
+                        "arousal": max(-1, min(1, (float(match.group(4)) - 3) / 2)),
 
-                        "dominance":
-                            (float(match.group(5)) - 3) / 2,
+                        "dominance": max(-1, min(1, (float(match.group(5)) - 3) / 2)),
                     }
 
         return data
