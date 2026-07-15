@@ -68,8 +68,8 @@ class IEMOCAPParser:
                             video_path.relative_to(self.root.parent)
                         ),
 
-                        # "start_time": emotions[utt_id]["start_time"],
-                        # "end_time": emotins[utt_id]["end_time"],
+                        "start_time": emotions[utt_id]["start_time"],
+                        "end_time": emotions[utt_id]["end_time"],
 
                         "emotion": emotions[utt_id]["emotion"],
 
@@ -118,13 +118,15 @@ class IEMOCAPParser:
 
                 if match:
 
-                    start_time = float(match.group(1))
-                    end_time = float(match.group(2))
                     utt_id = match.group(3)
 
                     data[utt_id] = {
                         "emotion": match.group(4),
 
+                        "start_time": float(match.group(1)),
+                        "end_time": float(match.group(2)),
+
+                        # Normalize to a [-1, 1] scale instead of [1, 5] scale
                         "valence": max(-1, min(1, (float(match.group(5)) - 3) / 2)),
                         "arousal": max(-1, min(1, (float(match.group(6)) - 3) / 2)),
                         "dominance": max(-1, min(1, (float(match.group(7)) - 3) / 2)),

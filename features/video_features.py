@@ -22,13 +22,26 @@ fer = HSEmotionRecognizer(
 )
 
 
-def extract_video_features(video_path):
+def extract_video_features(video_path, start_time, end_time):
 
     cap = cv2.VideoCapture(str(video_path))
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    start_frame = int(start_time * fps)
+    end_frame = int(end_time * fps)
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
     features = []
 
     while True:
+        
+        current_frame = cap.get(cv2.CAP_PROP_POS_FRAMES)
+
+        if current_frame >= end_frame:
+            break
+
         ret, frame = cap.read()
 
         if not ret:

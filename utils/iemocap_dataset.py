@@ -46,8 +46,8 @@ class IEMOCAPDataset(Dataset):
 
             "video_path": video_path,
 
-            # "start_time": row["start_time"],
-            # "end_time": row["end_time"],
+            "start_time": row["start_time"],
+            "end_time": row["end_time"],
 
             "pad": pad
         }

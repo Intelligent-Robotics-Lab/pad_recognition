@@ -83,7 +83,7 @@ class AudioProjectionEncoder(nn.Module):
 
         return self.out(pooled)  # [B, 512]
 
-# Video encoder using an LSTM model to capture temporal dynamics
+# Video encoder using a transformer model to capture temporal dynamics
 class VideoProjectionEncoder(nn.Module):
     def __init__(self, input_dim=1280, d_model=512, nhead=4, num_layers=2, dropout = 0.2):
         super().__init__()
