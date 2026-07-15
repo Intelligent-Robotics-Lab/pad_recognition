@@ -7,6 +7,7 @@ root = "data/IEMOCAP/IEMOCAP_full_release"
 parser = IEMOCAPParser(root)
 
 rows = parser.parse()
+print("Rows:", len(rows))
 
 df = pd.DataFrame(rows)
 

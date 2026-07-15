@@ -20,6 +20,9 @@ class IEMOCAPParser:
 
             wav_root = session_path / "sentences" / "wav"
 
+            avi_root = session_path / "dialog" / "avi" / "DivX"
+
+
             for trans_file in trans_dir.glob("*.txt"):
 
                 if trans_file.name.startswith("._"):
@@ -45,6 +48,11 @@ class IEMOCAPParser:
                     if wav_path is None:
                         continue
 
+                    video_path = self._find_video(avi_root, conversation)
+
+                    if video_path is None:
+                        continue
+
                     row = {
                         "utterance_id": utt_id,
                         "session": session,
@@ -55,6 +63,13 @@ class IEMOCAPParser:
                         "audio_path": str(
                             wav_path.relative_to(self.root.parent)
                         ),
+
+                        "video_path": str(
+                            video_path.relative_to(self.root.parent)
+                        ),
+
+                        # "start_time": emotions[utt_id]["start_time"],
+                        # "end_time": emotins[utt_id]["end_time"],
 
                         "emotion": emotions[utt_id]["emotion"],
 
@@ -95,22 +110,24 @@ class IEMOCAPParser:
             for line in f:
 
                 match = re.match(
-                    r"\[.*\]\s+(Ses\d+[MF]_\w+_\w+\d+)\s+(\w+)\s+\[([\d.]+),\s*([\d.]+),\s*([\d.]+)\]",
+                    r"\[(\d+\.\d+)\s*-\s*(\d+\.\d+)\]\s+"
+                    r"(Ses\d+[MF]_\w+_\w+\d+)\s+(\w+)\s+"
+                    r"\[([\d.]+),\s*([\d.]+),\s*([\d.]+)\]",
                     line
                 )
 
                 if match:
 
-                    utt_id = match.group(1)
+                    start_time = float(match.group(1))
+                    end_time = float(match.group(2))
+                    utt_id = match.group(3)
 
                     data[utt_id] = {
-                        "emotion": match.group(2),
+                        "emotion": match.group(4),
 
-                        "valence": max(-1, min(1, (float(match.group(3)) - 3) / 2)),
-
-                        "arousal": max(-1, min(1, (float(match.group(4)) - 3) / 2)),
-
-                        "dominance": max(-1, min(1, (float(match.group(5)) - 3) / 2)),
+                        "valence": max(-1, min(1, (float(match.group(5)) - 3) / 2)),
+                        "arousal": max(-1, min(1, (float(match.group(6)) - 3) / 2)),
+                        "dominance": max(-1, min(1, (float(match.group(7)) - 3) / 2)),
                     }
 
         return data
@@ -120,5 +137,14 @@ class IEMOCAPParser:
 
         for wav in root.rglob(f"{utt_id}.wav"):
             return wav
+
+        return None
+
+    def _find_video(self, root, conversation):
+
+        video = root / f"{conversation}.avi"
+
+        if video.exists():
+            return video
 
         return None

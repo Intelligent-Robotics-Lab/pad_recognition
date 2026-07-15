@@ -5,7 +5,6 @@ import torch
 from facenet_pytorch import MTCNN
 from hsemotion.facial_emotions import HSEmotionRecognizer
 
-
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Face detector
@@ -24,7 +23,8 @@ fer = HSEmotionRecognizer(
 
 
 def extract_video_features(video_path):
-    cap = cv2.VideoCapture(video_path)
+
+    cap = cv2.VideoCapture(str(video_path))
 
     features = []
 
@@ -34,6 +34,7 @@ def extract_video_features(video_path):
         if not ret:
             break
 
+        # OpenCV uses BGR but models expect RGB
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Detect faces in the frame
@@ -54,6 +55,9 @@ def extract_video_features(video_path):
 
         face = frame[y1:y2, x1:x2]
 
+        if face.size == 0:
+            continue
+
         # Run on the pretrained HSEmotion backbone
         embedding = fer.extract_features(face)
 
@@ -61,6 +65,7 @@ def extract_video_features(video_path):
 
     cap.release()
 
+    # If no faces were found
     if len(features) == 0:
         return np.zeros((1, 1280), dtype=np.float32)
 

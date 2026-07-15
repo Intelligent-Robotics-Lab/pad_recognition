@@ -21,6 +21,8 @@ class IEMOCAPDataset(Dataset):
 
         audio_path = self.root / row["audio_path"]
 
+        video_path = self.root / row["video_path"]
+
         waveform, sr = sf.read(audio_path)
 
         waveform = torch.tensor(
@@ -41,5 +43,11 @@ class IEMOCAPDataset(Dataset):
             "text": text,
             "audio": waveform,
             "sample_rate": sr,
+
+            "video_path": video_path,
+
+            # "start_time": row["start_time"],
+            # "end_time": row["end_time"],
+
             "pad": pad
         }
