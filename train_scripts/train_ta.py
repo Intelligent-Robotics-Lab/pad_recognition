@@ -3,43 +3,36 @@ Train script to test the audio and video modalaties together using the IEMOCAP d
 """
 
 import os
-import random
-from io import BytesIO
-
-import soundfile as sf
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from datasets import load_dataset, Audio
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
 from models.emotion_model_text_audio import EmotionPADModelTA
 
+from utils.dataloaders import get_iemocap_loaders
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# Valid options: "mlp" and "transformer"
 FUSION_TYPE = "mlp"
 
-num_epochs = 10
+num_epochs = 50
 learning_rate = 1e-4
 seed = 42
 
-random.seed(seed)
+# Still initialize despite not using random split as it "could" still affect parameters
 torch.manual_seed(seed)
 
-model = EmotionPADModelTA(
-    text_input_dim=1024,
-    audio_input_dim=1024,
-    d_model=512,
-    fusion_type=FUSION_TYPE
-).to(device)
+# Model initialize (Text-audio model)
+model = EmotionPADModelTA(text_input_dim=1024, audio_input_dim=1024, d_model=512, fusion_type=FUSION_TYPE).to(device)
 
 # Load pretrained weights from unimodal encoders (train_ind.py file)
-text_checkpoint = torch.load("saved_models/best_text_model.pth", map_location=device)
+text_checkpoint = torch.load("saved_models/best_text_model_raw.pth", map_location=device)
+audio_checkpoint = torch.load("saved_models/best_audio_model_raw.pth", map_location=device)
 
-audio_checkpoint = torch.load("saved_models/best_audio_model.pth", map_location=device)
-
-# Will update the logic in train_ind.py 
+# Remove the "encoder." prefix so the weights match EmotionPADModelTA declared above
 text_encoder_state = {
     k.replace("encoder.", ""): v
     for k, v in text_checkpoint.items()
@@ -52,23 +45,24 @@ audio_encoder_state = {
     if k.startswith("encoder.")
 }
 
+# Initialize the model encoders with the pretrained weights
 model.text_encoder.load_state_dict(text_encoder_state)
 model.audio_encoder.load_state_dict(audio_encoder_state)
 
 print("Loaded pretrained encoders.")
 
-# Immediately freeze the encoders so their weights are saved
+# Freeze the encoders so only the fusion module and regressor are trained
 for param in model.text_encoder.parameters():
     param.requires_grad = False
 
 for param in model.audio_encoder.parameters():
     param.requires_grad = False
 
-# Now only the fusion layer and PAD regressor will update
+# Only optimize trainable parameters
 optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
 loss_fn = nn.SmoothL1Loss(reduction="none")
 
-# Verify the frozen paramters
+# Verify which layers are updating (optional print)
 print("\nTrainable Paramters:")
 
 for name, param in model.named_parameters():
@@ -89,67 +83,52 @@ def ccc_score(pred, target):
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
     return ccc, ccc.mean().item()
 
-def scale_pad(values):
-    return (values - 3.0) / 2.0
+# Create the train/validation/test dataloaders
+train_loader, val_loader, test_loader = get_iemocap_loaders("data/iemocap.csv", batch_size=1)
 
-print("Loading IEMOCAP...")
-ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
-ds = ds.cast_column("audio", Audio(decode=False))
-
-print("Dataset size:", len(ds))
-
-# Compute the dataset mean to use in weighted loss function
-targets = torch.tensor(
-    [[ds[i]["EmoVal"], ds[i]["EmoAct"], ds[i]["EmoDom"]] for i in range(len(ds))],
-    dtype = torch.float32
+# Sanity check to verify dataset splits
+print(
+    f"Train: {len(train_loader.dataset)} | "
+    f"Val: {len(val_loader.dataset)} | "
+    f"Test: {len(test_loader.dataset)}"
 )
 
-mu = targets.mean(dim=0).to(device) # shape (3,)
-
-# Split the dataset
-indices = list(range(len(ds)))
-random.shuffle(indices)
-
-train_split = int(0.8 * len(indices))
-val_split   = int(0.9 * len(indices))
-
-train_idx = indices[:train_split]
-val_idx   = indices[train_split:val_split]
-test_idx  = indices[val_split:]
-
-print(f"Train: {len(train_idx)} | Val: {len(val_idx)} | Test: {len(test_idx)}")
-
-# Evaluate function (CCCs)
-def evaluate(model, indices, name="VAL"):
+# Evaluate the model on an entire dataset split (using CCCs)
+def evaluate(model, loader, name="VAL"):
     model.eval()
     preds_all = []
     targets_all = []
 
     with torch.no_grad():
-        for i in indices:
-            sample = ds[i]
-            target = torch.tensor(
-                [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
-                dtype=torch.float32,
-                device=device
-            )
+        for batch in loader:
+            text = batch["text"][0]
+            audio = batch["audio"][0]
+            sample_rate = batch["sample_rate"][0]
 
-            # Normalize to the -1 to 1 scale
-            target = scale_pad(target)
+            target = batch["pad"].to(device)
 
-            target = target.unsqueeze(0)
+            # Compute pretrained text and audio features
+            text_feats = extract_text_features(text)
+            audio_feats = extract_audio_features(audio, sample_rate)
 
-            text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
+            # Convert features to tensors on the right device
+            text_feats = torch.tensor(text_feats, dtype=torch.float32, device=device)
+            audio_feats = torch.tensor(audio_feats, dtype=torch.float32, device=device)
 
-            waveform, sr = sf.read(BytesIO(sample["audio"]["bytes"]))
-            audio_feats = extract_audio_features(waveform, sr)
-            audio_feats = torch.tensor(audio_feats, dtype=torch.float32).unsqueeze(0).to(device)
+            # Ensure proper dimensionality
+            if text_feats.dim() == 2:
+                text_feats = text_feats.unsqueeze(0)
 
+            if audio_feats.dim() == 2:
+                audio_feats = audio_feats.unsqueeze(0)
+
+            # Forward pass
             pred = model(text_feats, audio_feats)
 
             preds_all.append(pred)
             targets_all.append(target)
 
+    # Store predictions and perform CCC calculation
     preds_all = torch.cat(preds_all, dim=0)
     targets_all = torch.cat(targets_all, dim=0)
 
@@ -170,48 +149,60 @@ def evaluate(model, indices, name="VAL"):
 best_val_ccc = -float("inf")
 os.makedirs("saved_models", exist_ok=True)
 
-# Early stopping variables
-patience = 3
+# Early stopping settings
+patience = 5
 epochs_without_improvement = 0
 
 for epoch in range(num_epochs):
     print(f"\nEpoch {epoch+1}/{num_epochs}")
     running_loss = 0.0
 
-    random.shuffle(train_idx)
+    for i, batch in enumerate(train_loader):
+        text = batch["text"][0]
+        audio = batch["audio"][0]
+        sample_rate = batch["sample_rate"][0]
 
-    for i, idx in enumerate(train_idx):
-        sample = ds[idx]
-        target = torch.tensor(
-            [sample["EmoVal"], sample["EmoAct"], sample["EmoDom"]],
-            dtype=torch.float32,
-            device=device
-        )
+        target = batch["pad"].to(device)
 
-        # Normalize to the -1 to 1 scale
-        target = scale_pad(target)
+        # Print the first sample as a sanity check
+        if epoch == 0 and i == 0:
+            print("First sample")
+            print("Text:", text)
+            print("Target:", target)
 
-        target = target.unsqueeze(0)
+        text_feats = extract_text_features(text)
+        audio_feats = extract_audio_features(audio, sample_rate)
 
-        text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
+        # Convert features to tensors
+        text_feats = torch.as_tensor(text_feats, dtype=torch.float32, device=device)
+        audio_feats = torch.as_tensor(audio_feats, dtype=torch.float32, device=device)
 
-        waveform, sr = sf.read(BytesIO(sample["audio"]["bytes"]))
-        audio_feats = extract_audio_features(waveform, sr)
-        audio_feats = torch.tensor(audio_feats, dtype=torch.float32).unsqueeze(0).to(device)
+        if text_feats.dim() == 2:
+            text_feats = text_feats.unsqueeze(0)
 
+        if audio_feats.dim() == 2:
+            audio_feats = audio_feats.unsqueeze(0)
+
+        # Forward pass through the model 
         optimizer.zero_grad()
+
         pred = model(text_feats, audio_feats)
 
-        mse = loss_fn(pred, target).mean(dim=1)
-        loss = mse.mean()
+        SmoothL1Loss = loss_fn(pred, target).mean(dim=1)
+        loss = SmoothL1Loss.mean()
 
+        # Backpropagation
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        torch.nn.utils.clip_grad_value_(model.parameters(), 1.0)
+
+        # Update model parameters
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0,)
+        torch.nn.utils.clip_grad_value_(model.parameters(), 1.0,)
+
         optimizer.step()
 
         running_loss += loss.item()
 
+        # Print to inspect predictions during training
         if i % 200 == 0:
             print(f"\nSample {i}")
 
@@ -226,11 +217,11 @@ for epoch in range(num_epochs):
 
             print("Loss:", loss.item())
 
-    avg_loss = running_loss / len(train_idx)
+    avg_loss = running_loss / len(train_loader)
     print(f"\nEpoch {epoch+1} Train MSE: {avg_loss:.4f}")
 
-    # Validation with CCC
-    val_ccc = evaluate(model, val_idx, "VAL")
+    # Validation with CCC loss
+    val_ccc = evaluate(model, val_loader, "VAL")
 
     min_delta = 1e-3
 
@@ -239,7 +230,7 @@ for epoch in range(num_epochs):
         best_val_ccc = val_ccc
         epochs_without_improvement = 0
 
-        save_path = os.path.join("saved_models", f"best_ta_{FUSION_TYPE}.pth")
+        save_path = os.path.join("saved_models", f"best_ta_{FUSION_TYPE}_raw.pth")
         torch.save(model.state_dict(), save_path)
 
         print(

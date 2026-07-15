@@ -3,55 +3,39 @@ Inference script for the Text + Audio PAD model. Matches train_ta.py behavior ex
 """
 
 import os
-from io import BytesIO
-import random
-
 import numpy as np
-import soundfile as sf
 import torch
-from datasets import Audio, load_dataset
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
 from models.emotion_model_text_audio import EmotionPADModelTA
 
+from utils.dataloaders import get_iemocap_loaders
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-FUSION_TYPE = "transformer"
+# Valid inputs "mlp" and "transformer"
+FUSION_TYPE = "mlp"
 
 SEED = 42
 
-random.seed(SEED)
 torch.manual_seed(SEED)
 
-model = EmotionPADModelTA(
-    text_input_dim=1024,
-    audio_input_dim=1024,
-    d_model=512,
-    fusion_type=FUSION_TYPE
-).to(device)
+# Build the same text-audio model used during training
+model = EmotionPADModelTA(text_input_dim=1024, audio_input_dim=1024, d_model=512, fusion_type=FUSION_TYPE).to(device)
 
-checkpoint = f"saved_models/best_ta_{FUSION_TYPE}.pth"
+# Chosen from saved_models/
+checkpoint = f"saved_models/best_ta_{FUSION_TYPE}_raw.pth"
 model.load_state_dict(torch.load(checkpoint, map_location=device))
 model.eval()
 
 print(f"Loaded {checkpoint}")
 
-print("Loading IEMOCAP...")
-ds = load_dataset("AbstractTTS/IEMOCAP")["train"]
-ds = ds.cast_column("audio", Audio(decode=False))
+# Load only the held out test set data
+_, _, test_loader = get_iemocap_loaders("data/iemocap.csv",  batch_size=1)
+print(f"Testing on {len(test_loader.dataset)} samples")
 
-indices = list(range(len(ds)))
-random.shuffle(indices)
-
-train_split = int(0.8 * len(indices))
-val_split = int(0.9 * len(indices))
-
-test_idx = indices[val_split:]
-
-print(f"Testing on {len(test_idx)} samples")
-
-# Calculated metrics
+# Evaluation metrics
 def rmse(y_true, y_pred):
     return np.sqrt(np.mean((y_true - y_pred) ** 2))
 
@@ -78,28 +62,31 @@ targets = []
 
 with torch.no_grad():
 
-    for idx in test_idx:
+    for batch in test_loader:
 
-        sample = ds[idx]
+        # Read a sample from the dataloader
+        text = batch["text"][0]
+        audio = batch["audio"][0]
+        sample_rate = batch["sample_rate"][0]
 
-        target = np.array([
-            sample["EmoVal"],
-            sample["EmoAct"],
-            sample["EmoDom"]
-        ])
+        target = batch["pad"].squeeze(0).cpu().numpy()
 
-        # Normalize to the [-1, 1] range
-        target = (target - 3.0) / 2.0
+        # Extract text features
+        text_feats = extract_text_features(text)
+        audio_feats = extract_audio_features(audio, sample_rate)
 
-        # Text
-        text_feats = extract_text_features(sample["transcription"]).unsqueeze(0).to(device)
+        # Convert features into tensors
+        text_feats = torch.tensor(text_feats, dtype=torch.float32, device=device,)
+        audio_feats = torch.tensor(audio_feats, dtype=torch.float32, device=device,)
 
-        # Audio
-        waveform, sr = sf.read(BytesIO(sample["audio"]["bytes"]))
+        # Match training script dimensions
+        if text_feats.dim() == 2:
+            text_feats = text_feats.unsqueeze(0)
 
-        audio_feats = extract_audio_features(waveform, sr)
-        audio_feats = torch.tensor(audio_feats, dtype=torch.float32).unsqueeze(0).to(device)
+        if audio_feats.dim() == 2:
+            audio_feats = audio_feats.unsqueeze(0)
 
+        # Forward pass
         pred = model(text_feats, audio_feats)
 
         predictions.append(pred.squeeze(0).cpu().numpy())
