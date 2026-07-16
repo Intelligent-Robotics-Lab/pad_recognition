@@ -7,8 +7,9 @@ import torch
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
+from features.video_features import extract_video_features
 
-from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder)
+from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder, VideoProjectionEncoder)
 from models.pad_regressor import PADRegressors
 
 from models.single_modality_model import SingleModalityModel
@@ -30,8 +31,11 @@ if MODALITY == "text":
 elif MODALITY == "audio":
     encoder = AudioProjectionEncoder(input_dim=1024, d_model=512,)
 
+elif MODALITY == "video":
+    encoder = VideoProjectionEncoder(input_dim=1280, d_model=512)
+
 else:
-    raise ValueError("Only text and audio are currently supported.")
+    raise ValueError("Only text, audio, and video are currently supported.")
 
 regressor = PADRegressors(d_model=512, hidden_dim=256,)
 
@@ -79,6 +83,9 @@ with torch.no_grad():
 
         text = batch["text"][0]
         audio = batch["audio"][0]
+        video_path = batch["video_path"][0]
+        start_time = batch["start_time"][0]
+        end_time = batch["end_time"][0]
 
         target = batch["pad"].to(device)
 
@@ -88,12 +95,11 @@ with torch.no_grad():
         elif MODALITY == "audio":
             sample_rate = batch["sample_rate"][0]
             feats = extract_audio_features(audio, sample_rate)
+
+        elif MODALITY == "video":
+            feats = extract_video_features(video_path, start_time, end_time)
         
-        feats = torch.tensor(
-            feats,
-            dtype=torch.float32,
-            device=device
-        )
+        feats = torch.tensor(feats, dtype=torch.float32, device=device)
 
         if feats.dim() == 2:
             feats = feats.unsqueeze(0)

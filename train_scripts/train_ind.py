@@ -10,8 +10,9 @@ import torch.optim as optim
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
+from features.video_features import extract_video_features
 
-from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder)
+from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder, VideoProjectionEncoder)
 
 from models.pad_regressor import PADRegressors
 
@@ -21,7 +22,7 @@ from utils.dataloaders import get_iemocap_loaders
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MODALITY = "audio"
+MODALITY = "video"
 
 num_epochs = 50
 learning_rate = 1e-4
@@ -38,8 +39,11 @@ if MODALITY == "text":
 elif MODALITY == "audio":
     encoder = AudioProjectionEncoder(input_dim=1024, d_model=512,)
 
+elif MODALITY == "video":
+    encoder = VideoProjectionEncoder(input_dim=1280, d_model=512)
+
 else:
-    raise ValueError("Only text and audio are currently supported.")
+    raise ValueError("Only text, audio, and video are currently supported.")
 
 regressor = PADRegressors(d_model=512, hidden_dim=256,)
 
@@ -84,9 +88,13 @@ def evaluate(model, loader, name="VAL"):
     targets_all = []
 
     for batch in loader:
+        print("Validation sample")
 
         text = batch["text"][0]
         audio = batch["audio"][0]
+        video_path = batch["video_path"][0]
+        start_time = batch["start_time"][0]
+        end_time = batch["end_time"][0]
 
         target = batch["pad"].to(device)
 
@@ -97,11 +105,10 @@ def evaluate(model, loader, name="VAL"):
             sample_rate = batch["sample_rate"][0]
             feats = extract_audio_features(audio, sample_rate)
 
-        feats = torch.tensor(
-            feats,
-            dtype=torch.float32,
-            device=device
-        )
+        elif MODALITY == "video":
+            feats = extract_video_features(video_path, start_time, end_time)
+
+        feats = torch.tensor(feats, dtype=torch.float32, device=device)
 
         if feats.dim() == 2:
             feats = feats.unsqueeze(0)
@@ -111,6 +118,8 @@ def evaluate(model, loader, name="VAL"):
         preds_all.append(pred)
         targets_all.append(target)
 
+    print("Predictions collected:", len(preds_all))
+    print("Targets collected:", len(targets_all))
     preds_all = torch.cat(preds_all)
     targets_all = torch.cat(targets_all)
 
@@ -142,12 +151,23 @@ for epoch in range(num_epochs):
     for i, batch in enumerate(train_loader):
         text = batch["text"][0]
         audio = batch["audio"][0]
+        video_path = batch["video_path"][0]
+        start_time = batch["start_time"][0]
+        end_time = batch["end_time"][0]
         target = batch["pad"].to(device)
 
         if epoch == 0 and i == 0:
             print("First sample")
-            print("Text:", text)
             print("Target:", target)
+
+            if MODALITY == "text":
+                print("Text:", text)
+
+            elif MODALITY == "audio":
+                print("Audio length:", len(audio))
+            
+            elif MODALITY == "video":
+                print("Video:", video_path)
 
         if MODALITY == "text":
             feats = extract_text_features(text)
@@ -156,11 +176,10 @@ for epoch in range(num_epochs):
             sample_rate = batch["sample_rate"][0]
             feats = extract_audio_features(audio, sample_rate)
 
-        feats = torch.tensor(
-            feats,
-            dtype=torch.float32,
-            device=device
-        )
+        elif MODALITY == "video":
+            feats = extract_video_features(video_path, start_time, end_time)
+
+        feats = torch.tensor(feats, dtype=torch.float32, device=device)
 
         # Depends on the extractor but just a precaution
         if feats.dim() == 2:
@@ -179,7 +198,7 @@ for epoch in range(num_epochs):
 
         running_loss += loss.item()
 
-        if i % 200 == 0:
+        if i % 10 == 0:
             print(f"\nSample {i}")
 
             print("Pred:", pred.detach().cpu())
