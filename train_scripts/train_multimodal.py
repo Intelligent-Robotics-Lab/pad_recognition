@@ -1,5 +1,5 @@
 """
-Train script to test the text and audio modalaties together using the IEMOCAP dataset.
+Train script to test text, audio, and video modalaties together using the IEMOCAP dataset.
 """
 
 import os
@@ -9,7 +9,9 @@ import torch.optim as optim
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from models.emotion_model_text_audio import EmotionPADModelTA
+from features.video_feats import extract_video_features
+
+from models.emotion_model_text_audio import EmotionPADModel
 
 from utils.dataloaders import get_iemocap_loaders
 
@@ -26,11 +28,12 @@ seed = 42
 torch.manual_seed(seed)
 
 # Model initialize (Text-audio model)
-model = EmotionPADModelTA(text_input_dim=1024, audio_input_dim=1024, d_model=512, fusion_type=FUSION_TYPE).to(device)
+model = EmotionPADModel(text_input_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
 
 # Load pretrained weights from unimodal encoders (train_ind.py file)
 text_checkpoint = torch.load("saved_models/best_text_model_raw.pth", map_location=device)
 audio_checkpoint = torch.load("saved_models/best_audio_model_raw.pth", map_location=device)
+video_checkpoint = torch.load("saved_models/best_video_model_raw.pth", map_location=device)
 
 # Remove the "encoder." prefix so the weights match EmotionPADModelTA declared above
 text_encoder_state = {
@@ -45,9 +48,16 @@ audio_encoder_state = {
     if k.startswith("encoder.")
 }
 
+video_encoder_state = {
+    k.replace("encoder.", ""): v
+    for k, v in video_checkpoint.items()
+    if k.startswith("encoder.")
+}
+
 # Initialize the model encoders with the pretrained weights
 model.text_encoder.load_state_dict(text_encoder_state)
 model.audio_encoder.load_state_dict(audio_encoder_state)
+model.video_encoder.load_state_dict(video_encoder_state)
 
 print("Loaded pretrained encoders.")
 
@@ -56,6 +66,9 @@ for param in model.text_encoder.parameters():
     param.requires_grad = False
 
 for param in model.audio_encoder.parameters():
+    param.requires_grad = False
+
+for param in model.video_encoder.parameters():
     param.requires_grad = False
 
 # Only optimize trainable parameters
@@ -104,16 +117,21 @@ def evaluate(model, loader, name="VAL"):
             text = batch["text"][0]
             audio = batch["audio"][0]
             sample_rate = batch["sample_rate"][0]
+            video_path = batch["video_path"][0]
+            start_time = batch["start_time"][0]
+            end_time = batch["end_time"][0]
 
             target = batch["pad"].to(device)
 
             # Compute pretrained text and audio features
             text_feats = extract_text_features(text)
             audio_feats = extract_audio_features(audio, sample_rate)
+            video_feats = extract_video_features(video_path, start_time, end_time)
 
             # Convert features to tensors on the right device
-            text_feats = torch.tensor(text_feats, dtype=torch.float32, device=device)
-            audio_feats = torch.tensor(audio_feats, dtype=torch.float32, device=device)
+            text_feats = torch.as_tensor(text_feats, dtype=torch.float32, device=device)
+            audio_feats = torch.as_tensor(audio_feats, dtype=torch.float32, device=device)
+            video_feats = torch.as_tensor(video_feats, dtype=torch.float32, device=device)
 
             # Ensure proper dimensionality
             if text_feats.dim() == 2:
@@ -122,8 +140,11 @@ def evaluate(model, loader, name="VAL"):
             if audio_feats.dim() == 2:
                 audio_feats = audio_feats.unsqueeze(0)
 
+            if video_feats.dim() == 2:
+                video_feats = video_feats.unsqueeze(0)
+
             # Forward pass
-            pred = model(text_feats, audio_feats)
+            pred = model(text_feats, audio_feats, video_feats)
 
             preds_all.append(pred)
             targets_all.append(target)
@@ -161,6 +182,9 @@ for epoch in range(num_epochs):
         text = batch["text"][0]
         audio = batch["audio"][0]
         sample_rate = batch["sample_rate"][0]
+        video_path = batch["video_path"][0]
+        start_time = batch["start_time"][0]
+        end_time = batch["end_time"][0]
 
         target = batch["pad"].to(device)
 
@@ -172,10 +196,12 @@ for epoch in range(num_epochs):
 
         text_feats = extract_text_features(text)
         audio_feats = extract_audio_features(audio, sample_rate)
+        video_feats = extract_video_features(video_path, start_time, end_time)
 
         # Convert features to tensors
         text_feats = torch.as_tensor(text_feats, dtype=torch.float32, device=device)
         audio_feats = torch.as_tensor(audio_feats, dtype=torch.float32, device=device)
+        video_feats = torch.as_tensor(video_feats, dtype=torch.float32, device=device)
 
         if text_feats.dim() == 2:
             text_feats = text_feats.unsqueeze(0)
@@ -183,10 +209,13 @@ for epoch in range(num_epochs):
         if audio_feats.dim() == 2:
             audio_feats = audio_feats.unsqueeze(0)
 
+        if video_feats.dim() == 2:
+            video_feats = video_feats.unsqueeze(0)
+
         # Forward pass through the model 
         optimizer.zero_grad()
 
-        pred = model(text_feats, audio_feats)
+        pred = model(text_feats, audio_feats, video_feats)
 
         SmoothL1Loss = loss_fn(pred, target).mean(dim=1)
         loss = SmoothL1Loss.mean()
@@ -230,7 +259,7 @@ for epoch in range(num_epochs):
         best_val_ccc = val_ccc
         epochs_without_improvement = 0
 
-        save_path = os.path.join("saved_models", f"best_ta_{FUSION_TYPE}_raw.pth")
+        save_path = os.path.join("saved_models", f"best_tav_{FUSION_TYPE}_raw.pth")
         torch.save(model.state_dict(), save_path)
 
         print(
