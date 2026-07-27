@@ -24,6 +24,7 @@ class EmotionPADModelTA(nn.Module):
 
             self.fusion = MLPFusion(
                 d_model=d_model,
+                num_modalities=2
             )
 
         elif fusion_type == "transformer":
@@ -32,7 +33,8 @@ class EmotionPADModelTA(nn.Module):
                 d_model=d_model,
                 nhead=1,
                 num_layers=1,
-                dropout=0.1
+                dropout=0.1,
+                num_modalities=2
             )
 
         else:

@@ -1,5 +1,5 @@
 """
-Inference script for single-modality PAD prediction using IEMOCAP. Matches train_single_modality.py exactly.
+Inference script for single-modality PAD prediction using IEMOCAP. Matches train_ind.py exactly.
 """
 
 import numpy as np
@@ -16,7 +16,7 @@ from models.single_modality_model import SingleModalityModel
 
 from utils.dataloaders import get_iemocap_loaders
 
-MODALITY = "audio"
+MODALITY = "video"
 
 SEED = 42
 USE_GRU = False

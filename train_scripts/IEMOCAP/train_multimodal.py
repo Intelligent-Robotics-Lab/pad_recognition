@@ -9,16 +9,16 @@ import torch.optim as optim
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from features.video_feats import extract_video_features
+from features.video_features import extract_video_features
 
-from models.emotion_model_text_audio import EmotionPADModel
+from models.emotion_model import EmotionPADModel
 
 from utils.dataloaders import get_iemocap_loaders
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Valid options: "mlp" and "transformer"
-FUSION_TYPE = "mlp"
+FUSION_TYPE = "transformer"
 
 num_epochs = 50
 learning_rate = 1e-4
@@ -28,7 +28,7 @@ seed = 42
 torch.manual_seed(seed)
 
 # Model initialize (Text-audio model)
-model = EmotionPADModel(text_input_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
+model = EmotionPADModel(text_hidden_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
 
 # Load pretrained weights from unimodal encoders (train_ind.py file)
 text_checkpoint = torch.load("saved_models/best_text_model_raw.pth", map_location=device)

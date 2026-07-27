@@ -5,11 +5,11 @@ import torch.nn as nn
 class MLPFusion(nn.Module):
     # Simple concatenation and MLP fusion
 
-    def __init__(self, d_model=512):
+    def __init__(self, d_model=512, num_modalities=2):
         super().__init__()
 
         self.fusion = nn.Sequential(
-            nn.Linear(d_model * 2, d_model),
+            nn.Linear(d_model * num_modalities, d_model),
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(d_model, d_model),

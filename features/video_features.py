@@ -22,7 +22,7 @@ fer = HSEmotionRecognizer(
 )
 
 
-def extract_video_features(video_path, start_time, end_time):
+def extract_video_features(video_path, start_time, end_time, frame_skip=5):
 
     cap = cv2.VideoCapture(str(video_path))
 
@@ -35,6 +35,8 @@ def extract_video_features(video_path, start_time, end_time):
 
     features = []
 
+    frame_idx = start_frame
+
     while True:
         
         current_frame = cap.get(cv2.CAP_PROP_POS_FRAMES)
@@ -46,6 +48,12 @@ def extract_video_features(video_path, start_time, end_time):
 
         if not ret:
             break
+
+        if frame_idx % frame_skip != 0:
+            frame_idx += 1
+            continue
+
+        frame_idx += 1
 
         # OpenCV uses BGR but models expect RGB
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

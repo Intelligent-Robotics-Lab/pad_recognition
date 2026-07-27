@@ -22,14 +22,16 @@ class EmotionPADModel(nn.Module):
 
         if fusion_type == "mlp":
             self.fusion = MLPFusion(
-                d_model
+                d_model,
+                num_modalities=3
             )
         elif fusion_type == "transformer":
             self.fusion = CrossModalTransformer(
                 d_model=d_model,
                 nhead=1, 
                 num_layers=1, 
-                dropout=0.1
+                dropout=0.1,
+                num_modalities=3
             )
 
         else:
