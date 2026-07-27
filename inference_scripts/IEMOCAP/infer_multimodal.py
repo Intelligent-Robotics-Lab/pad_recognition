@@ -1,0 +1,129 @@
+"""
+Inference script for the Text + Audio PAD model. Matches train_ta.py behavior exactly.
+"""
+
+import os
+import numpy as np
+import torch
+
+from features.text_features import extract_text_features
+from features.audio_features import extract_audio_features
+from features.video_features import extract_video_features
+
+from models.emotion_model_text_audio import EmotionaPADModel
+
+from utils.dataloaders import get_iemocap_loaders
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Valid inputs "mlp" and "transformer"
+FUSION_TYPE = "mlp"
+
+SEED = 42
+
+torch.manual_seed(SEED)
+
+# Build the same text-audio model used during training
+model = EmotionaPADModel(text_input_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
+
+# Chosen from saved_models/
+checkpoint = f"saved_models/best_tav_{FUSION_TYPE}_raw.pth"
+model.load_state_dict(torch.load(checkpoint, map_location=device))
+model.eval()
+
+print(f"Loaded {checkpoint}")
+
+# Load only the held out test set data
+_, _, test_loader = get_iemocap_loaders("data/iemocap.csv",  batch_size=1)
+print(f"Testing on {len(test_loader.dataset)} samples")
+
+# Evaluation metrics
+def rmse(y_true, y_pred):
+    return np.sqrt(np.mean((y_true - y_pred) ** 2))
+
+def mae(y_true, y_pred):
+    return np.mean(np.abs(y_true - y_pred))
+
+def pearson(y_true, y_pred):
+    return np.corrcoef(y_true, y_pred)[0, 1]
+
+def ccc(y_true, y_pred):
+    mean_true = np.mean(y_true)
+    mean_pred = np.mean(y_pred)
+
+    var_true = np.var(y_true)
+    var_pred = np.var(y_pred)
+
+    cov = np.mean((y_true - mean_true) * (y_pred - mean_pred))
+
+    return (2 * cov / (var_true + var_pred + (mean_true - mean_pred) ** 2 + 1e-8))
+
+# Inference script
+predictions = []
+targets = []
+
+with torch.no_grad():
+
+    for batch in test_loader:
+
+        # Read a sample from the dataloader
+        text = batch["text"][0]
+        audio = batch["audio"][0]
+        sample_rate = batch["sample_rate"][0]
+        video_path = batch["video_path"][0]
+        start_time = batch["start_time"][0]
+        end_time = batch["end_time"][0]
+
+        target = batch["pad"].squeeze(0).cpu().numpy()
+
+        # Extract text features
+        text_feats = extract_text_features(text)
+        audio_feats = extract_audio_features(audio, sample_rate)
+        video_feats = extract_video_features(video_path, start_time, end_time)
+
+        # Convert features into tensors
+        text_feats = torch.tensor(text_feats, dtype=torch.float32, device=device,)
+        audio_feats = torch.tensor(audio_feats, dtype=torch.float32, device=device,)
+        video_feats = torch.tensor(video_feats, dtype=torch.float32, device=device)
+
+        # Match training script dimensions
+        if text_feats.dim() == 2:
+            text_feats = text_feats.unsqueeze(0)
+
+        if audio_feats.dim() == 2:
+            audio_feats = audio_feats.unsqueeze(0)
+
+        if video_feats.dim() == 2:
+            video_feats = video_feats.unsqueeze(0)
+
+        # Forward pass
+        pred = model(text_feats, audio_feats, video_feats)
+
+        predictions.append(pred.squeeze(0).cpu().numpy())
+        targets.append(target)
+
+predictions = np.array(predictions)
+targets = np.array(targets)
+
+# Printed results section
+dims = ["Pleasure", "Arousal", "Dominance"]
+ccc_scores = []
+
+print("\nTEXT + AUDIO INFERENCE RESULTS\n")
+
+for i, dim in enumerate(dims):
+
+    y_true = targets[:, i]
+    y_pred = predictions[:, i]
+
+    score = ccc(y_true, y_pred)
+    ccc_scores.append(score)
+
+    print(dim)
+    print(f"CCC      : {score:.4f}")
+    print(f"Pearson  : {pearson(y_true, y_pred):.4f}")
+    print(f"RMSE     : {rmse(y_true, y_pred):.4f}")
+    print(f"MAE      : {mae(y_true, y_pred):.4f}")
+    print()
+
+print(f"Average CCC : {np.mean(ccc_scores):.4f}")

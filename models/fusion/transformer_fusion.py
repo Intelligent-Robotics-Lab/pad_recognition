@@ -7,7 +7,7 @@ Simpler learned fusion methods preserve complementary informatio nbetter while l
 """
 
 class CrossModalTransformer(nn.Module):
-    def __init__(self, d_model=512, nhead=1, num_layers=1, dropout=0.1):
+    def __init__(self, d_model=512, nhead=1, num_layers=1, dropout=0.1, num_modalities=2):
         super().__init__()
 
         encoder_layer = nn.TransformerEncoderLayer(
@@ -21,10 +21,10 @@ class CrossModalTransformer(nn.Module):
 
         self.transformer = nn.TransformerEncoder(
             encoder_layer,
-            num_layers=1
+            num_layers=num_layers
         )
 
-        self.output_projection = nn.Linear(d_model * 2, d_model,)
+        self.output_projection = nn.Linear(d_model * num_modalities, d_model,)
 
     def forward(self, embeddings):
         # Embeddings: [B, 2, 512]
