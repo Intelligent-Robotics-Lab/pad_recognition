@@ -4,9 +4,9 @@ from utils.iemocap_collate import iemocap_collate
 from utils.split import create_splits
 
 
-def get_iemocap_loaders(csv_path, batch_size=8):
+def get_iemocap_loaders(csv_path, batch_size=8, split="loso", fold=1):
 
-    train_df, val_df, test_df = create_splits(csv_path)
+    train_df, val_df, test_df = create_splits(csv_path, split=split, fold=fold)
 
     train_df.to_csv("data/train_split.csv", index=False)
     val_df.to_csv("data/val_split.csv", index=False)

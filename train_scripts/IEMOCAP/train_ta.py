@@ -84,7 +84,14 @@ def ccc_score(pred, target):
     return ccc, ccc.mean().item()
 
 # Create the train/validation/test dataloaders
-train_loader, val_loader, test_loader = get_iemocap_loaders("data/iemocap.csv", batch_size=1)
+FOLD = 1
+
+train_loader, val_loader, test_loader = get_iemocap_loaders(
+    "data/iemocap.csv", 
+    batch_size=1,
+    split="loso",
+    fold=FOLD
+)
 
 # Sanity check to verify dataset splits
 print(
