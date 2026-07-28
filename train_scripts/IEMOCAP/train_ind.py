@@ -57,7 +57,6 @@ def evaluate(model, loader, name="VAL"):
     targets_all = []
 
     for batch in loader:
-        print("Validation sample")
 
         text = batch["text"][0]
         audio = batch["audio"][0]
