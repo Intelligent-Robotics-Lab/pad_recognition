@@ -16,7 +16,7 @@ from models.single_modality_model import SingleModalityModel
 
 from utils.dataloaders import get_iemocap_loaders
 
-MODALITY = "video"
+MODALITY = "text"
 
 SEED = 42
 USE_GRU = False
@@ -41,7 +41,7 @@ regressor = PADRegressors(d_model=512, hidden_dim=256,)
 
 model = SingleModalityModel(encoder=encoder, pad_regressor=regressor).to(device)
 
-checkpoint = f"saved_models/best_{MODALITY}_model_raw.pth"
+checkpoint = f"saved_models/best_{MODALITY}_loso_fold1.pth"
 model.load_state_dict(torch.load(checkpoint, map_location=device))
 model.eval()
 

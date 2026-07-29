@@ -27,54 +27,6 @@ seed = 42
 # Still initialize despite not using random split as it "could" still affect parameters
 torch.manual_seed(seed)
 
-# Model initialize (Text-audio model)
-model = EmotionPADModel(text_hidden_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
-
-# Load pretrained weights from unimodal encoders (train_ind.py file)
-text_checkpoint = torch.load("saved_models/best_text_model_raw.pth", map_location=device)
-audio_checkpoint = torch.load("saved_models/best_audio_model_raw.pth", map_location=device)
-video_checkpoint = torch.load("saved_models/best_video_model_raw.pth", map_location=device)
-
-# Remove the "encoder." prefix so the weights match EmotionPADModelTA declared above
-text_encoder_state = {
-    k.replace("encoder.", ""): v
-    for k, v in text_checkpoint.items()
-    if k.startswith("encoder.")
-}
-
-audio_encoder_state = {
-    k.replace("encoder.", ""): v
-    for k, v in audio_checkpoint.items()
-    if k.startswith("encoder.")
-}
-
-video_encoder_state = {
-    k.replace("encoder.", ""): v
-    for k, v in video_checkpoint.items()
-    if k.startswith("encoder.")
-}
-
-# Initialize the model encoders with the pretrained weights
-model.text_encoder.load_state_dict(text_encoder_state)
-model.audio_encoder.load_state_dict(audio_encoder_state)
-model.video_encoder.load_state_dict(video_encoder_state)
-
-print("Loaded pretrained encoders.")
-
-# Freeze the encoders so only the fusion module and regressor are trained
-for param in model.text_encoder.parameters():
-    param.requires_grad = False
-
-for param in model.audio_encoder.parameters():
-    param.requires_grad = False
-
-for param in model.video_encoder.parameters():
-    param.requires_grad = False
-
-# Only optimize trainable parameters
-optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
-loss_fn = nn.SmoothL1Loss(reduction="none")
-
 # Verify which layers are updating (optional print)
 print("\nTrainable Paramters:")
 
@@ -96,22 +48,6 @@ def ccc_score(pred, target):
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
     return ccc, ccc.mean().item()
 
-# Create the train/validation/test dataloaders
-FOLD = 1
-
-train_loader, val_loader, test_loader = get_iemocap_loaders(
-    "data/iemocap.csv", 
-    batch_size=1,
-    split="loso",
-    fold=FOLD,
-)
-
-# Sanity check to verify dataset splits
-print(
-    f"Train: {len(train_loader.dataset)} | "
-    f"Val: {len(val_loader.dataset)} | "
-    f"Test: {len(test_loader.dataset)}"
-)
 
 # Evaluate the model on an entire dataset split (using CCCs)
 def evaluate(model, loader, name="VAL"):
@@ -174,113 +110,194 @@ def evaluate(model, loader, name="VAL"):
     return avg
 
 # Training loop
-best_val_ccc = -float("inf")
-os.makedirs("saved_models", exist_ok=True)
+def train_fold(fold):
 
-# Early stopping settings
-patience = 5
-epochs_without_improvement = 0
+    print(f"\nTraining Multimodal ({FUSION_TYPE}) | Fold {fold}")
 
-for epoch in range(num_epochs):
-    print(f"\nEpoch {epoch+1}/{num_epochs}")
-    running_loss = 0.0
+    # Model initialize (Text-audio model)
+    model = EmotionPADModel(text_hidden_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
 
-    for i, batch in enumerate(train_loader):
-        text = batch["text"][0]
-        audio = batch["audio"][0]
-        sample_rate = batch["sample_rate"][0]
-        video_path = batch["video_path"][0]
-        start_time = batch["start_time"][0]
-        end_time = batch["end_time"][0]
+    # Load pretrained weights from unimodal encoders (train_ind.py file)
+    text_checkpoint = torch.load("saved_models/best_text_model_raw.pth", map_location=device)
+    audio_checkpoint = torch.load("saved_models/best_audio_model_raw.pth", map_location=device)
+    video_checkpoint = torch.load("saved_models/best_video_model_raw.pth", map_location=device)
 
-        target = batch["pad"].to(device)
+    # Remove the "encoder." prefix so the weights match EmotionPADModelTA declared above
+    text_encoder_state = {
+        k.replace("encoder.", ""): v
+        for k, v in text_checkpoint.items()
+        if k.startswith("encoder.")
+    }
 
-        # Print the first sample as a sanity check
-        if epoch == 0 and i == 0:
-            print("First sample")
-            print("Text:", text)
-            print("Target:", target)
+    audio_encoder_state = {
+        k.replace("encoder.", ""): v
+        for k, v in audio_checkpoint.items()
+        if k.startswith("encoder.")
+    }
 
-        text_feats = extract_text_features(text)
-        audio_feats = extract_audio_features(audio, sample_rate)
-        video_feats = extract_video_features(video_path, start_time, end_time)
+    video_encoder_state = {
+        k.replace("encoder.", ""): v
+        for k, v in video_checkpoint.items()
+        if k.startswith("encoder.")
+    }
 
-        # Convert features to tensors
-        text_feats = torch.as_tensor(text_feats, dtype=torch.float32, device=device)
-        audio_feats = torch.as_tensor(audio_feats, dtype=torch.float32, device=device)
-        video_feats = torch.as_tensor(video_feats, dtype=torch.float32, device=device)
+    # Initialize the model encoders with the pretrained weights
+    model.text_encoder.load_state_dict(text_encoder_state)
+    model.audio_encoder.load_state_dict(audio_encoder_state)
+    model.video_encoder.load_state_dict(video_encoder_state)
 
-        if text_feats.dim() == 2:
-            text_feats = text_feats.unsqueeze(0)
+    print("Loaded pretrained encoders.")
 
-        if audio_feats.dim() == 2:
-            audio_feats = audio_feats.unsqueeze(0)
+    # Freeze the encoders so only the fusion module and regressor are trained
+    for param in model.text_encoder.parameters():
+        param.requires_grad = False
 
-        if video_feats.dim() == 2:
-            video_feats = video_feats.unsqueeze(0)
+    for param in model.audio_encoder.parameters():
+        param.requires_grad = False
 
-        # Forward pass through the model 
-        optimizer.zero_grad()
+    for param in model.video_encoder.parameters():
+        param.requires_grad = False
 
-        pred = model(text_feats, audio_feats, video_feats)
+    # Only optimize trainable parameters
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+    loss_fn = nn.SmoothL1Loss(reduction="none")
 
-        SmoothL1Loss = loss_fn(pred, target).mean(dim=1)
-        loss = SmoothL1Loss.mean()
+    train_loader, val_loader, test_loader = get_iemocap_loaders(
+        "data/iemocap.csv",
+        batch_size=1,
+        split="loso",
+        fold=fold,
+    )
 
-        # Backpropagation
-        loss.backward()
+    print(
+        f"Train: {len(train_loader.dataset)} | "
+        f"Val: {len(val_loader.dataset)} | "
+        f"Test: {len(test_loader.dataset)} | "
+    )
 
-        # Update model parameters
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0,)
-        torch.nn.utils.clip_grad_value_(model.parameters(), 1.0,)
+    best_val_ccc = -float("inf")
+    os.makedirs("saved_models", exist_ok=True)
 
-        optimizer.step()
+    # Early stopping settings
+    patience = 5
+    epochs_without_improvement = 0
 
-        running_loss += loss.item()
+    for epoch in range(num_epochs):
+        print(f"\nEpoch {epoch+1}/{num_epochs}")
+        running_loss = 0.0
 
-        # Print to inspect predictions during training
-        if i % 200 == 0:
-            print(f"\nSample {i}")
+        for i, batch in enumerate(train_loader):
+            text = batch["text"][0]
+            audio = batch["audio"][0]
+            sample_rate = batch["sample_rate"][0]
+            video_path = batch["video_path"][0]
+            start_time = batch["start_time"][0]
+            end_time = batch["end_time"][0]
 
-            print("Pred:", pred.detach().cpu())
-            print("Target:", target.detach().cpu())
+            target = batch["pad"].to(device)
 
-            print("Pred PAD mean:", pred.mean(dim=1).item())
-            print("Target PAD mean:", target.mean(dim=1).item())
+            # Print the first sample as a sanity check
+            if epoch == 0 and i == 0:
+                print("First sample")
+                print("Text:", text)
+                print("Target:", target)
 
-            print("Pred PAD std:", pred.squeeze(0).std().item())
-            print("Target PAD std:", target.squeeze(0).std().item())
+            text_feats = extract_text_features(text)
+            audio_feats = extract_audio_features(audio, sample_rate)
+            video_feats = extract_video_features(video_path, start_time, end_time)
 
-            print("Loss:", loss.item())
+            # Convert features to tensors
+            text_feats = torch.as_tensor(text_feats, dtype=torch.float32, device=device)
+            audio_feats = torch.as_tensor(audio_feats, dtype=torch.float32, device=device)
+            video_feats = torch.as_tensor(video_feats, dtype=torch.float32, device=device)
 
-    avg_loss = running_loss / len(train_loader)
-    print(f"\nEpoch {epoch+1} Train MSE: {avg_loss:.4f}")
+            if text_feats.dim() == 2:
+                text_feats = text_feats.unsqueeze(0)
 
-    # Validation with CCC loss
-    val_ccc = evaluate(model, val_loader, "VAL")
+            if audio_feats.dim() == 2:
+                audio_feats = audio_feats.unsqueeze(0)
 
-    min_delta = 1e-3
+            if video_feats.dim() == 2:
+                video_feats = video_feats.unsqueeze(0)
 
-    # Save the best model only
-    if val_ccc > best_val_ccc + min_delta:
-        best_val_ccc = val_ccc
-        epochs_without_improvement = 0
+            # Forward pass through the model 
+            optimizer.zero_grad()
 
-        save_path = os.path.join("saved_models", f"best_tav_{FUSION_TYPE}_raw.pth")
-        torch.save(model.state_dict(), save_path)
+            pred = model(text_feats, audio_feats, video_feats)
 
-        print(
-            f"Saved new best model "
-            f"(VAL CCC = {best_val_ccc:.4f})"
-        )
-    
-    else:
-        epochs_without_improvement += 1
-        print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
+            SmoothL1Loss = loss_fn(pred, target).mean(dim=1)
+            loss = SmoothL1Loss.mean()
 
-        if epochs_without_improvement >= patience:
-            print("\nEarly stopping triggered.")
-            break
+            # Backpropagation
+            loss.backward()
 
-print("Training complete.")
-print(f"Best validation CCC: {best_val_ccc:.4f}")
+            # Update model parameters
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0,)
+            torch.nn.utils.clip_grad_value_(model.parameters(), 1.0,)
+
+            optimizer.step()
+
+            running_loss += loss.item()
+
+            # Print to inspect predictions during training
+            if i % 200 == 0:
+                print(f"\nSample {i}")
+
+                print("Pred:", pred.detach().cpu())
+                print("Target:", target.detach().cpu())
+
+                print("Pred PAD mean:", pred.mean(dim=1).item())
+                print("Target PAD mean:", target.mean(dim=1).item())
+
+                print("Pred PAD std:", pred.squeeze(0).std().item())
+                print("Target PAD std:", target.squeeze(0).std().item())
+
+                print("Loss:", loss.item())
+
+        avg_loss = running_loss / len(train_loader)
+        print(f"\nEpoch {epoch+1} Train MSE: {avg_loss:.4f}")
+
+        # Validation with CCC loss
+        val_ccc = evaluate(model, val_loader, "VAL")
+
+        min_delta = 1e-3
+
+        # Save the best model only
+        if val_ccc > best_val_ccc + min_delta:
+            best_val_ccc = val_ccc
+            epochs_without_improvement = 0
+
+            save_path = os.path.join("saved_models", f"best_tav_{FUSION_TYPE}_raw.pth")
+            torch.save(model.state_dict(), save_path)
+
+            print(
+                f"Saved new best model "
+                f"(VAL CCC = {best_val_ccc:.4f})"
+            )
+        
+        else:
+            epochs_without_improvement += 1
+            print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
+
+            if epochs_without_improvement >= patience:
+                print("\nEarly stopping triggered.")
+                break
+
+    print("\nFold {fold} complete.")
+    print(f"Best validation CCC: {best_val_ccc:.4f}")
+
+    return best_val_ccc
+
+results = {}
+
+for fold in range(1, 6);
+    results[fold] = train_fold(fold)
+
+print("\nFinal LOSO Validation Results")
+
+for fold, score in results.items():
+    print(f"Fold {fold}: {score:.4f}")
+
+mean_ccc = sum(results.values()) / len(results)
+
+print(f"\nMean Validation CCC: {mean_ccc:.4f}")
