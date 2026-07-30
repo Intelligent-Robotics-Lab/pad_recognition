@@ -267,7 +267,7 @@ def train_fold(fold):
             best_val_ccc = val_ccc
             epochs_without_improvement = 0
 
-            save_path = os.path.join("saved_models", f"best_tav_{FUSION_TYPE}_raw.pth")
+            save_path = os.path.join("saved_models", f"best_tav_{FUSION_TYPE}_loso_fold{fold}.pth")
             torch.save(model.state_dict(), save_path)
 
             print(
