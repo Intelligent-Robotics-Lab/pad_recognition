@@ -1,103 +1,144 @@
-# PAD Multimodal Emotion Recognition
+# PAD Multimodal Emotion Recognition — System Documentation
 
-##  **1. Overview**
-This is a python-based implementation of a multimodal emotional recognition system for social human-robot interaction. The system will predict emotional state from a converstaional turn using the **PAD (Pleasure, Arousal, Dominance)** model. Verbal content, vocal information, and facial expressions are processed independently, encoded into a shared space, fused through attention, and regressed into continuous emotion dimensions.
+## 1. Overview
+A Python-based multimodal emotion recognition system for social human-robot interaction.
+Predicts emotional state for a conversational turn using the **PAD (Pleasure, Arousal,
+Dominance)** model. Verbal content, vocal information, and facial expressions are processed
+independently, encoded into a shared space, fused through cross-modal attention, and
+regressed into continuous emotion dimensions.
 
-## **2. PAD Model**
+## 2. PAD Model
 The PAD framework represents emotion along three continuous psychological dimensions:
+- **Pleasure (P)** — positive vs. negative affect
+- **Arousal (A)** — energy vs. calmness
+- **Dominance (D)** — control vs. submission
 
-**- Pleasure (P)** - positive vs. negative affect
-**- Arousal (A)** - energy vs. calmness
-**- Dominance (D)** - control vs. submission
+The model outputs continuous values in `[-1, 1]` per dimension.
 
-The model outputs continuous values in the range **[-1,1]**, suitable for downstream affect-aware decision making.
+## 3. System Architecture
+Four major components, in order: feature extraction -> modality encoders -> cross-modal
+fusion -> PAD regression heads.
 
-## **3 .System Architecture**
-The system follows a standard modular pipeline commonly used in multimodal afffective computing that is organized into four major components:
-### 3.1 **Feature Extraction**
-Raw text, audio, and video inputs are converted into structured feature sequences:
-- Text -> BERT token embeddings
-- Audio -> Wav2Vec sequence representations
-- Video -> FER emotion probability predictions
+## 4. Feature Extraction
+Implemented in `features/`. Features are extracted **on the fly, per batch**, during both
+training and inference — not precomputed and cached to disk ahead of time. This is a real
+cost: every epoch re-runs feature extraction for every sample.
 
-All features are precomputed for efficiency and stored as tensors to be used in training.
+### 4.1 Text Features
+RoBERTa-large token embeddings:
+- Token-level embeddings extracted and preserved per utterance (sequence, not pooled, so
+  temporal/positional information survives into the encoder)
+- Tensor shape: `[T, 1024]` per utterance (`[B, T, 1024]` batched)
 
-### 3.2 **Modality Encoders**
-Each modality is passed through an independent encoder that normalizes and projects features into a shared embedding space.
-- **Text Encoder:** A small transformer encoder processes BERT token embeddings and applies attention pooling
-- **Audio Encoder:** A LSTM-based projection encoder that captures temporal prosodic factors 
-- **Video Encoder:** A LSTM-based projection encoder that captures temporal video dynamics
-Each encoder outputs a 512-dimension embedding representing its modality.
-### 3.3 **Cross-Modal Fusion**
-Encoded features are fed into a **cross-modal transformer** block that performs early fusion via attention:
-- Identifies complementary signals across modalities
-- Downweights noisy or missing modalities
-- Produces a single fused embedding representing the joint emotional signal
-## 4. **Regression Heads**
-Three independent MLP regressors map the fused embedding to continuous predictions for pleasure, arousal, and dominance. Each regressor is designed for its specific PAD dimension to accommodate differing contributing factors and distributions.
+### 4.2 Audio Features
+HuBERT-large (`facebook/hubert-large-ls960-ft`), via `Wav2Vec2Processor`:
+- Waveform loaded, processed, and passed through the HuBERT model
+- Tensor shape: `[T, 1024]`
 
-## **4.Feature Extraction**
-Feature extraction is implemented in dedicated modules under the features/ directory. 
+### 4.3 Video Features
+MTCNN face detection + HSEmotion (`enet_b0_8_best_afew`) embeddings:
+- Frames sampled every 5th frame
+- Tensor shape: `[T, 1280]`
 
-### **4.1 Text Features**
-Text features are extracted using a **BERT-based embedding pipeline:**
-- Token-level embeddings are extracted and normalized per utterance
-- Sequence of token embeddings is preserved for temporal information
-- Resulting tensor shape: [batch, num_tokens, 1024]
+## 5. Modality Encoders
+Implemented in `models/encoders.py`. **All three modalities use the same encoder
+pattern** — a transformer encoder with attention pooling:
+- 2-layer, 4-head `nn.TransformerEncoder` over the time dimension
+- Learned attention pooling (`Linear -> softmax` over time) collapses the sequence to a
+  single vector
+- Projected/normalized to a shared `d_model = 512` embedding
 
-### **4.2 Audio Features**
-Audio features capture prosodic and spectral cues associated with emotional expression. After loading in the waveform, audio features are extracted using a **Wav2Vec embedding pipeline:**
-- Mel-frequemcy cepstral coefficients (MFCCs)
-- MFCC deltas
-- Pitch
-- Energy
-- Spectral centroid
-All features are extracted at frame level and concatenated. The resulting tensor shape is as follows: [batch, num_frames, 1024s]
+### 5.1 Text Transformer Encoder (`TextTransformerEncoder`)
+Input `[B, T, 1024]` -> transformer -> attention pooling -> `Linear+LayerNorm` projection
+-> `[B, 512]`.
 
-### **4.3 Video Features**
-Video features capture facial expression and nonverbal cues. Each video is sampled at 5 frames per second representing a new reading every 200ms. A **FER-based extraction pipeline**  
-- **Facial Action Unit Approximations** and landmarks
-- **Head pose** (tilt, roll, yaw)
-- **Gaze direction** and related cues
-The resulting tensor shape isL [batch, num_frames, 7]
+### 5.2 Audio Transformer Encoder (`AudioProjectionEncoder`)
+Input `[B, T, 1024]` -> linear input projection to 512 -> transformer -> attention pooling
+-> `[B, 512]`.
 
-Individual modality testing has shown limitations to each of these models with improvements planned for each of the system components.
+### 5.3 Video Transformer Encoder (`VideoProjectionEncoder`)
+Input `[B, T, 1280]` -> linear input projection to 512 -> transformer -> attention pooling
+-> `[B, 512]`. Structurally identical to the audio encoder aside from input dimensionality.
 
-## **5. Feature Encoding**
-Each modality's raw feature vector is passed through a dedicated encoder. This includes a small transformer model detected for text, and a seperate LSTM model for each the audio and video features to learn representation across time. These encoders also serve to project the heterogenous input features into a shared **512-dimensional space**. Noise injection is also utilized during training to encourage robustness.
+## 6. Cross-Modal Fusion
+Implemented in `models/fusion/`. The three 512-dim embeddings are stacked to `[B, 3, 512]`
+and fused via one of two selectable mechanisms (`fusion_type`):
+- **`CrossModalTransformer`** (default) — a 1-layer, 1-head transformer over the 3 modality
+  tokens; identifies complementary/redundant signal across modalities and produces a single
+  fused `[B, 512]` embedding.
+- **`MLPFusion`** — concatenates the three embeddings and passes them through an MLP.
+  Simpler, no cross-modal attention.
 
-### **5.1 Text Transformer Encoder**
+## 7. Regression Heads
+Implemented in `models/pad_regressor.py` (`PADRegressors`). A **shared** trunk feeds three
+**independent** output heads:
+- Shared trunk: `Linear(512->256) -> GELU -> Dropout(0.2) -> Linear(256->256) -> GELU`
+- Three separate `Linear(256->1)` heads (pleasure, arousal, dominance), each passed through
+  `tanh` to bound output to `[-1, 1]`
 
-### **5.2 Audio LSTM Encoder**
+Separate heads (sharing only the trunk) because each PAD dimension is a distinct
+psychological axis with different statistical properties.
 
-### **5.3 Video LSTM Encoder**
+## 8. Training
+Two-stage pipeline, not end-to-end from scratch:
 
-## **6. Cross-Modal Fusion**
-Early fusion is implemented using a transformer block that receives the three encoded modality ebeddings as input tokens. Cross-modal attention enables the model to:
-- Identify complementary information across modalities
-- Down-weight noisy or missing modalities
-- Produce a single fused embedding capturing the joint emotional signal
+1. **Unimodal pretraining** (`train_scripts/IEMOCAP/train_ind.py`) — one encoder +
+   `PADRegressors` trained alone per modality (set `MODALITY` at the top of the file, run
+   once per modality). Saves fold-specific checkpoints:
+   `saved_models/best_{modality}_loso_fold{N}.pth`.
+2. **Fusion training** (`train_ta.py` for text+audio, `train_multimodal.py` for
+   text+audio+video) — loads pretrained encoder weights, **freezes them**, and trains only
+   the fusion module + regression heads. Currently loads a single fixed checkpoint
+   (`saved_models/best_{modality}_model_raw.pth`) for every fold rather than the
+   fold-specific one `train_ind.py` now produces — see `docs/project_state.md` for why
+   that's flagged as a possible LOSO leakage risk, not yet resolved.
 
-The **512-dimensional fused embedding** output gathered from this fusion is used for all downstream regression tasks.
+**Evaluation protocol:** Leave-One-Subject-Out (LOSO) cross-validation
+(`utils/split.py`) — one IEMOCAP session (1-5) held out entirely as test per fold, remaining
+sessions split 90/10 train/val (seed 42). All train/inference scripts loop folds 1-5 and
+report per-fold and mean CCC.
 
-## **7. Regression Heads**
-Three independent regression heads predict pleasure, arousal, and dominance. Each head is a MLP consisting of:
-- (Linear -> GELU -> Dropout) x 3 -> Linear
-Seperate regressors are used because each PAD dimension represents a distinct psychological axis with different statistical properties. These blocks predict continuous PAD values in the range [-1,1]
+**Hyperparameters:** 50 epochs, Adam, lr=1e-4, `SmoothL1Loss`, gradient clipping (norm and
+value, both at 1.0), early stopping with patience=5 on validation CCC, seed=42 throughout.
 
-## **8. Training**
+## 9. Performance and Latency
+No results have been logged yet under the current LOSO protocol for any pipeline; results
+below predate the LOSO switch (simple train/val split) and are **not comparable** to future
+LOSO numbers:
+- Text only: 0.40 CCC
+- Audio only: 0.46 CCC
+- Text + Audio fusion: 0.5576 CCC
+- Full text+audio+video: no result ever logged
 
-## **9. Peformance and Latency**
+Inference latency has not been benchmarked. Given feature extraction happens on the fly
+(RoBERTa/HuBERT/MTCNN+HSEmotion all run per sample, per call) rather than from cached
+features, per-sample latency is likely dominated by feature extraction rather than the
+encoder/fusion/regressor forward pass — worth profiling before making latency claims.
 
-## **10. Limitations and Future Improvements**
-(This block needs to be updated based on some of the improvements already made)
-Current limitations include:
-- Reliance on averaged features, which may lose fine-grained temporal dynamics
-- Sensitivity to low-quality audio or video inputs
-- Limited modeling of conversational context beyond single turns
-Potentional Improvements:
-- Incorporating temporal models (e.g., LSTMs, temporal transformers)
-- Adding contextual dialogue history
+## 10. Limitations and Future Work
 
-## **11. Future Work**
-Future extensions may explore how emotional dimensions interact over time, how dominance influences conversational flow, and how multimodal cues can be leveraged for adaptive human-robot interaction strategies.
+Current limitations:
+- Attention pooling collapses each modality to a single vector *before* fusion, discarding
+  token/frame-level temporal alignment across modalities — the cross-modal transformer never
+  sees fine-grained timing relationships between, e.g., a specific word and a specific facial
+  expression.
+- Sensitivity to low-quality audio or video inputs (feature extractors are pretrained on
+  clean data).
+- No modeling of conversational context beyond a single turn.
+- Feature extraction is not cached, so training/inference cost scales with dataset size on
+  every pass rather than being paid once.
+- MELD support exists as scaffolding but is not currently functional (model API mismatches,
+  incompatible video feature dimensionality vs. IEMOCAP) — single-dataset only for now.
+- The fusion-stage frozen-encoder / LOSO-fold mismatch noted in Section 8 is an open
+  methodological question, not just an implementation detail.
+
+Potential improvements:
+- Resolve the frozen-encoder/fold mismatch (load per-fold pretrained encoders in the fusion
+  stage instead of a fixed checkpoint)
+- Cache extracted features instead of recomputing per epoch
+- Add MELD as a genuine second dataset (would require aligning video feature dimensionality
+  and fixing the model API calls)
+- Extend beyond single-turn context to model dialogue history
+- Investigate whether attention-pooling weights are behaving as intended — there's an open,
+  unresolved investigation into this in the encoder code as of 2026-07-31 (see
+  `docs/project_state.md`)

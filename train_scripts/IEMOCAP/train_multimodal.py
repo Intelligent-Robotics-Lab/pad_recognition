@@ -27,13 +27,6 @@ seed = 42
 # Still initialize despite not using random split as it "could" still affect parameters
 torch.manual_seed(seed)
 
-# Verify which layers are updating (optional print)
-print("\nTrainable Paramters:")
-
-for name, param in model.named_parameters():
-    if param.requires_grad:
-        print(name)
-
 # CCCs for evaluation only
 @torch.no_grad()
 def ccc_score(pred, target):
@@ -157,6 +150,13 @@ def train_fold(fold):
 
     for param in model.video_encoder.parameters():
         param.requires_grad = False
+
+    # Verify which layers are updating (optional print)
+    print("\nTrainable Paramters:")
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(name)
 
     # Only optimize trainable parameters
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
@@ -290,7 +290,7 @@ def train_fold(fold):
 
 results = {}
 
-for fold in range(1, 6);
+for fold in range(1, 6):
     results[fold] = train_fold(fold)
 
 print("\nFinal LOSO Validation Results")
