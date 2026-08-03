@@ -1,5 +1,12 @@
 """
 Training script for the EmotionaPADModel on precomputed MELD features.
+
+Uses MELD's original fixed train/dev/test split, not LOSO cross-validation like the
+IEMOCAP pipelines. Deferred: MELD's 260 speakers are heavily imbalanced (6 main characters
+with ~1300+ utterances each, a long tail with single digits), so a literal leave-one-speaker
+-out fold doesn't map cleanly onto IEMOCAP's 5 balanced sessions, and the precomputed .pt
+chunks don't carry speaker/dialogue IDs needed to build folds anyway. Revisit if/when MELD
+becomes an active priority rather than connective/preparatory work.
 """
 
 import os
@@ -80,7 +87,7 @@ val_loader = DataLoader(
 )
 
 model = EmotionPADModel(
-    text_input_dim=1024,
+    text_hidden_dim=1024,
     audio_input_dim=1024,
     video_input_dim=7,
     d_model=d_model
@@ -109,8 +116,7 @@ def evaluate(model, loader, device):
         video_feats = video_feats.to(device)
         pad_targets = pad_targets.to(device)
 
-        pleasure, arousal, dominance = model(text_feats, audio_feats, video_feats)
-        preds = torch.cat([pleasure, arousal, dominance], dim=1)
+        preds = model(text_feats, audio_feats, video_feats)
 
         all_preds.append(preds)
         all_targets.append(pad_targets)
@@ -155,12 +161,10 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
 
         try:
-            pleasure, arousal, dominance = model(text_feats, audio_feats, video_feats)
+            preds = model(text_feats, audio_feats, video_feats)
         except Exception as e:
             print(f"[Forward Error] Batch {batch_idx}: {str(e)}")
             raise
-
-        preds = torch.cat([pleasure, arousal, dominance], dim=1)
 
         # Per sample MSE calculation
         mse = ((preds - pad_targets) ** 2).mean(dim=1)  # (batch,)

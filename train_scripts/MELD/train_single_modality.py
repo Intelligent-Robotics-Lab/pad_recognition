@@ -1,6 +1,9 @@
 """
-Single-modality training script for debugging PAD learning on one modality at a time. This is useful for diagnosing issues with specific modalities 
+Single-modality training script for debugging PAD learning on one modality at a time. This is useful for diagnosing issues with specific modalities
 and ensuring that the model can learn from each modality independently before combining them in the full multimodal model.
+
+Uses MELD's original fixed train/dev/test split, not LOSO like the IEMOCAP pipelines —
+see train.py in this directory for why that's deferred.
 """
 
 import os
@@ -18,7 +21,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 128
 num_epochs = 50
 learning_rate = 1e-4 # Possibly change to 1e-4 specifically with audio test
-use_gru = True
 
 # Emotion to PAD mapping (inverse of emotion_to_label used earlier to calculate weights)
 emotion_to_pad = torch.tensor([
@@ -107,11 +109,10 @@ val_loader = DataLoader(
 )
 
 full_model = EmotionPADModel(
-    text_input_dim=1024,
+    text_hidden_dim=1024,
     audio_input_dim=1024,
     video_input_dim=7,
-    d_model=512,
-    use_gru=use_gru
+    d_model=512
 ).to(device)
 
 if MODALITY == "text":

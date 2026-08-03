@@ -1,5 +1,8 @@
 """
 Training script for the EmotionaPADModel, text and audio exclusive, on precomputed MELD features.
+
+Uses MELD's original fixed train/dev/test split, not LOSO like the IEMOCAP pipelines —
+see train.py in this directory for why that's deferred.
 """
 
 import os
@@ -106,8 +109,7 @@ def evaluate(model, loader, device):
         audio_feats = audio_feats.to(device)
         pad_targets = pad_targets.to(device)
 
-        pleasure, arousal, dominance = model(text_feats, audio_feats)
-        preds = torch.cat([pleasure, arousal, dominance], dim=1)
+        preds = model(text_feats, audio_feats)
 
         all_preds.append(preds)
         all_targets.append(pad_targets)
@@ -151,12 +153,10 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
 
         try:
-            pleasure, arousal, dominance = model(text_feats, audio_feats)
+            preds = model(text_feats, audio_feats)
         except Exception as e:
             print(f"[Forward Error] Batch {batch_idx}: {str(e)}")
             raise
-
-        preds = torch.cat([pleasure, arousal, dominance], dim=1)
 
         # Per sample MSE calculation
         mse = ((preds - pad_targets) ** 2).mean(dim=1)  # (batch,)

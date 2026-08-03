@@ -34,9 +34,9 @@ test_loader = DataLoader(
 )
 
 model = EmotionPADModel(
-    text_input_dim=1024, 
-    audio_input_dim=1024, 
-    video_input_dim=7, 
+    text_hidden_dim=1024,
+    audio_input_dim=1024,
+    video_input_dim=7,
     d_model=512
 ).to(device)
 
@@ -56,8 +56,7 @@ for batch_idx, (text_feats, audio_feats, video_feats, pad_targets) in enumerate(
     video_feats = (video_feats - video_feats.mean(dim=0)) / (video_feats.std(dim=0) + 1e-6)
 
     with torch.no_grad():
-        pleasure, arousal, dominance = model(text_feats, audio_feats, video_feats)
-        preds = torch.cat([pleasure, arousal, dominance], dim=1)  # [batch, 3]
+        preds = model(text_feats, audio_feats, video_feats)  # [batch, 3]
 
     all_preds.append(preds.cpu().numpy())
     all_targets.append(pad_targets.cpu().numpy())

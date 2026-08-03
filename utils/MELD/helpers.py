@@ -3,7 +3,9 @@ import pandas as pd
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 import torch
-import subprocess 
+import subprocess
+import cv2
+import soundfile as sf
 
 # Map MELD emotion labels → PAD values (taken directly from literature, see README for sources)
 emotion_to_pad = {
@@ -53,11 +55,12 @@ class DatasetStats:
         self.video_mean = stats["video_mean"]
         self.video_std = stats["video_std"]
 
-# Dataset class for loading precomputed tensors (text/audio/video) and PAD targets, with optional normalization
+# Dataset class for on-the-fly MELD loading, mirroring IEMOCAPDataset (utils/iemocap_dataset.py):
+# raw text/waveform/video-path per sample, features extracted per-batch during train/inference rather than precomputed and cached as done previously
 class MELDMultimodalDataset(Dataset):
     def __init__(self, root_dir, split="train"):
         """
-        root_dir: base folder containing `train_sent_emo.csv`, `wav/`, and `mp4/`
+        root_dir: base folder containing `{split}_sent_emo.csv` and the `train`/`dev`/`test` media folders
         split: "train", "dev", or "test"
         """
         self.root_dir = root_dir
@@ -85,9 +88,28 @@ class MELDMultimodalDataset(Dataset):
         audio_path, video_path = build_media_paths(self.root_dir, self.split, dialogue_id, utt_id)
         pad_target = torch.tensor(emotion_to_pad.get(emotion, [0.0, 0.1, 0.5]), dtype=torch.float32)
 
-        print(f"DEBUG: idx={idx}, emotion='{emotion}', pad_target={pad_target}")
+        waveform, sr = sf.read(audio_path)
+        waveform = torch.tensor(waveform, dtype=torch.float32)
 
-        return text, audio_path, video_path, pad_target
+        # MELD clips are already trimmed to one utterance each
+        cap = cv2.VideoCapture(str(video_path))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        cap.release()
+        end_time = frame_count / fps if fps else 0.0
+
+        return {
+            "text": text,
+            "audio": waveform,
+            "sample_rate": sr,
+
+            "video_path": video_path,
+
+            "start_time": 0.0,
+            "end_time": end_time,
+
+            "pad": pad_target
+        }
 
 # Precomputed dataset class for loading tensors from disk, with optional normalization using provided statistics
 class PrecomputedDataset(Dataset):

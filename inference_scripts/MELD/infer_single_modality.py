@@ -37,7 +37,7 @@ test_loader = DataLoader(
 )
 
 full_model = EmotionPADModel(
-    text_input_dim=1024,
+    text_hidden_dim=1024,
     audio_input_dim=1024,
     video_input_dim=7,
     d_model=512
