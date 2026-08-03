@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, ConcatDataset
 from torch.optim.lr_scheduler import StepLR
-from utils.helpers import PrecomputedDataset, multimodal_collate, get_emotions_indices
+from utils.meld_helpers import PrecomputedDataset, multimodal_collate, get_emotions_indices
 from models.emotion_model import EmotionPADModel
 from models.single_modality_model import SingleModalityModel
 

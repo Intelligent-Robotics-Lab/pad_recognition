@@ -1,7 +1,17 @@
+"""
+Deferred/non-functional as of 2026-08-03 (see docs/decision_log.md): imports
+features.audio_features_v2 / features.video_features_v2, which no longer exist in this
+repo, and MELDDataset.__getitem__ now returns a dict (utils/meld_dataset.py, matching
+IEMOCAPDataset) rather than the (text, audio_path, video_path, pad_target) tuple this
+script unpacks. Training/inference now load MELD on the fly via utils/meld_dataset.py +
+utils/dataloaders.py's get_meld_loaders, same as IEMOCAP — this precompute path is not
+part of that pipeline. Left in place for reference only.
+"""
+
 import os
 import torch
 from tqdm import tqdm
-from utils.helpers import MELDMultimodalDataset
+from utils.meld_dataset import MELDDataset
 from features.text_features import prepare_text_features
 from features.audio_features_v2 import extract_wav2vec_features
 from features.video_features_v2 import extract_emotion_probs
@@ -27,7 +37,7 @@ def get_existing_chunks(split):
 
 # Precompute features for a given split and save in chunks, with resume capability
 def precompute(split, max_samples=None):
-    dataset = MELDMultimodalDataset(
+    dataset = MELDDataset(
         root_dir=ROOT_DIR,
         split=split
     )

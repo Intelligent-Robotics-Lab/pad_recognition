@@ -6,7 +6,7 @@ import os
 import torch
 import numpy as np
 from torch.utils.data import DataLoader, ConcatDataset
-from utils.helpers import PrecomputedDataset, multimodal_collate
+from utils.meld_helpers import PrecomputedDataset, multimodal_collate
 from models.emotion_model_text_audio import EmotionPADModelTA
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

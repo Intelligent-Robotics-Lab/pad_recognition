@@ -1,22 +1,12 @@
 import os
-import pandas as pd
-from torch.utils.data import Dataset
-from torch.nn.utils.rnn import pad_sequence
-import torch
 import subprocess
-import cv2
-import soundfile as sf
+import torch
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import Dataset
 
-# Map MELD emotion labels → PAD values (taken directly from literature, see README for sources)
-emotion_to_pad = {
-    "anger":      [-0.51, 0.59,  0.25],
-    "disgust":    [-0.375,  0.1,  0.15],    # average of dislike, hate, reproach, resentment
-    "fear":       [-0.64,  0.6,  -0.43],
-    "joy":        [ 0.4,  0.2,  0.1],
-    "neutral":    [ 0.0,  0.0,  0.0],
-    "sadness":    [-0.34,  -0.1,  -0.52],   # average of disappointment, distress, pity, remorse, shame
-    "surprise":   [ 0.6,  0.6, 0.4]         # taken from the words section
-}
+# Legacy helpers for the precomputed-feature MELD pipeline (utils/meld_precompute_features.py),
+# kept for reference/audio-extraction utilities. Training/inference now load on the fly via
+# utils/meld_dataset.py + utils/meld_collate.py, mirroring the IEMOCAP pipeline.
 
 def get_emotions_indices(pad_targets):
     # Define PAD centers as tensor (NOT dict)
@@ -33,14 +23,6 @@ def get_emotions_indices(pad_targets):
     dists = torch.cdist(pad_targets, emotion_to_pad)  # (batch, 7)
     return torch.argmin(dists, dim=1)
 
-# Construct paths for audio/video files in the train/dev/test subfolders
-def build_media_paths(root_dir, split, dialogue_id, utterance_id):
-    clip_name = f"dia{dialogue_id}_utt{utterance_id}"
-    folder = os.path.join(root_dir, split)
-    video_path = os.path.join(folder, clip_name + ".mp4")
-    audio_path = os.path.join(folder, clip_name + ".wav")
-    return audio_path, video_path
-
 # Dataset class for storing dataset statistics (mean/std for text/audio/video) used for normalization in the PrecomputedDataset
 class DatasetStats:
     def __init__(self, stats_path):
@@ -54,62 +36,6 @@ class DatasetStats:
 
         self.video_mean = stats["video_mean"]
         self.video_std = stats["video_std"]
-
-# Dataset class for on-the-fly MELD loading, mirroring IEMOCAPDataset (utils/iemocap_dataset.py):
-# raw text/waveform/video-path per sample, features extracted per-batch during train/inference rather than precomputed and cached as done previously
-class MELDMultimodalDataset(Dataset):
-    def __init__(self, root_dir, split="train"):
-        """
-        root_dir: base folder containing `{split}_sent_emo.csv` and the `train`/`dev`/`test` media folders
-        split: "train", "dev", or "test"
-        """
-        self.root_dir = root_dir
-        file_map = {
-            "train": "train_sent_emo.csv",
-            "dev":   "dev_sent_emo.csv",
-            "test":  "test_sent_emo.csv",
-        }
-        csv_path = os.path.join(root_dir, file_map[split])
-        self.df = pd.read_csv(csv_path)
-        self.df = self.df[self.df["Emotion"].notna()].reset_index(drop=True)
-        self.split = split
-
-    def __len__(self):
-        return len(self.df)
-
-    def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        text = row["Utterance"]
-        emotion = row["Emotion"].lower()
-
-        dialogue_id = row["Dialogue_ID"]
-        utt_id = row["Utterance_ID"]
-
-        audio_path, video_path = build_media_paths(self.root_dir, self.split, dialogue_id, utt_id)
-        pad_target = torch.tensor(emotion_to_pad.get(emotion, [0.0, 0.1, 0.5]), dtype=torch.float32)
-
-        waveform, sr = sf.read(audio_path)
-        waveform = torch.tensor(waveform, dtype=torch.float32)
-
-        # MELD clips are already trimmed to one utterance each
-        cap = cv2.VideoCapture(str(video_path))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        cap.release()
-        end_time = frame_count / fps if fps else 0.0
-
-        return {
-            "text": text,
-            "audio": waveform,
-            "sample_rate": sr,
-
-            "video_path": video_path,
-
-            "start_time": 0.0,
-            "end_time": end_time,
-
-            "pad": pad_target
-        }
 
 # Precomputed dataset class for loading tensors from disk, with optional normalization using provided statistics
 class PrecomputedDataset(Dataset):
@@ -127,7 +53,7 @@ class PrecomputedDataset(Dataset):
         audio = sample["audio"]
         video = sample["video"]
         pad =sample["pad"]
-        
+
         if audio.dim() == 1:
             audio = audio.unsqueeze(0)
         elif audio.dim() == 3:
@@ -144,7 +70,7 @@ class PrecomputedDataset(Dataset):
             text = (text - self.stats.text_mean) / (self.stats.text_std + 1e-8)
             audio = (audio - self.stats.audio_mean) / (self.stats.audio_std + 1e-8)
             video = (video - self.stats.video_mean) / (self.stats.video_std + 1e-8)
-        
+
         return text, audio, video, pad
 
 # Collate function to handle variable-length sequences and filter out invalid samples
@@ -186,8 +112,13 @@ def multimodal_collate(batch):
 
     return text, audio, video, pad
 
-# Extract audio from .mp4 files using moviepy (fallback method, less efficient than ffmpeg) 
+# Extract audio from .mp4 files using moviepy (fallback method, less efficient than ffmpeg).
+# Imported lazily since moviepy isn't installed by default (requirements.txt lists it, but
+# nothing in the active pipeline calls this fallback — MELD's .wav files already exist on
+# disk, extracted via extract_audio_ffmpeg below).
 def extract_audio_from_mp4(mp4_path, save_path, target_sr=16000):
+    from moviepy import VideoFileClip
+
     if os.path.exists(save_path):
         print(f"Skipped (already exists): {save_path}")
         return save_path

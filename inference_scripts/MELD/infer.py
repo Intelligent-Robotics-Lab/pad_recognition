@@ -7,7 +7,7 @@ like RMSE, MAE, Pearson CC, and CCC for each of the PAD dimensions.
 import os
 import torch
 from torch.utils.data import DataLoader, ConcatDataset
-from utils.helpers import PrecomputedDataset, multimodal_collate
+from utils.meld_helpers import PrecomputedDataset, multimodal_collate
 from models.emotion_model import EmotionPADModel
 import numpy as np
 

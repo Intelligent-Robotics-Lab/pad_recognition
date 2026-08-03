@@ -8,7 +8,7 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader, ConcatDataset
 
-from utils.helpers import PrecomputedDataset, multimodal_collate
+from utils.meld_helpers import PrecomputedDataset, multimodal_collate
 from models.emotion_model import EmotionPADModel
 from models.single_modality_model import SingleModalityModel
 
