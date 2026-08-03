@@ -110,10 +110,11 @@ def train_fold(fold):
     # Model initialize (Text-audio model)
     model = EmotionPADModel(text_hidden_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
 
-    # Load pretrained weights from unimodal encoders (train_ind.py file)
-    text_checkpoint = torch.load("saved_models/best_text_model_raw.pth", map_location=device)
-    audio_checkpoint = torch.load("saved_models/best_audio_model_raw.pth", map_location=device)
-    video_checkpoint = torch.load("saved_models/best_video_model_raw.pth", map_location=device)
+    # Load pretrained weights from this fold's unimodal encoders (train_ind.py file)
+    # Fold-specific so the encoder never saw this fold's held-out session during pretraining
+    text_checkpoint = torch.load(f"saved_models/best_text_loso_fold{fold}.pth", map_location=device)
+    audio_checkpoint = torch.load(f"saved_models/best_audio_loso_fold{fold}.pth", map_location=device)
+    video_checkpoint = torch.load(f"saved_models/best_video_loso_fold{fold}.pth", map_location=device)
 
     # Remove the "encoder." prefix so the weights match EmotionPADModelTA declared above
     text_encoder_state = {
