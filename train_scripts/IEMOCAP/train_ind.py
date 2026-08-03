@@ -1,5 +1,5 @@
 """
-Train script for individual modalities (text and audio) using the IEMOCAP dataset
+Train script for individual modalities (text, audio, and video) using the IEMOCAP dataset
 """
 
 import os

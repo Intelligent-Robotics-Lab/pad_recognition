@@ -1,5 +1,5 @@
 """
-Train script to test text, audio, and video modalaties together using the MELD dataset.
+Train script to test the text and audio modalaties together using the MELD dataset.
 """
 
 import os
@@ -9,10 +9,9 @@ import torch.optim as optim
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from features.video_features import extract_video_features
 
 from utils.dataloaders import get_meld_loaders
-from models.emotion_model import EmotionPADModel
+from models.emotion_model_text_audio import EmotionPADModelTA
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -50,28 +49,21 @@ def evaluate(model, loader, name="VAL"):
             text = batch["text"][0]
             audio = batch["audio"][0]
             sample_rate = batch["sample_rate"][0]
-            video_path = batch["video_path"][0]
-            start_time = batch["start_time"][0]
-            end_time = batch["end_time"][0]
 
             target = batch["pad"].to(device)
 
             text_feats = extract_text_features(text)
             audio_feats = extract_audio_features(audio, sample_rate)
-            video_feats = extract_video_features(video_path, start_time, end_time)
 
             text_feats = torch.as_tensor(text_feats, dtype=torch.float32, device=device)
             audio_feats = torch.as_tensor(audio_feats, dtype=torch.float32, device=device)
-            video_feats = torch.as_tensor(video_feats, dtype=torch.float32, device=device)
 
             if text_feats.dim() == 2:
                 text_feats = text_feats.unsqueeze(0)
             if audio_feats.dim() == 2:
                 audio_feats = audio_feats.unsqueeze(0)
-            if video_feats.dim() == 2:
-                video_feats = video_feats.unsqueeze(0)
 
-            pred = model(text_feats, audio_feats, video_feats)
+            pred = model(text_feats, audio_feats)
 
             preds_all.append(pred)
             targets_all.append(target)
@@ -95,10 +87,9 @@ def evaluate(model, loader, name="VAL"):
 # batch_size=1 to match meld_collate's dict-of-lists shape.
 train_loader, val_loader, _ = get_meld_loaders(batch_size=1)
 
-model = EmotionPADModel(
-    text_hidden_dim=1024,
+model = EmotionPADModelTA(
+    text_input_dim=1024,
     audio_input_dim=1024,
-    video_input_dim=1280,
     d_model=512,
     fusion_type=FUSION_TYPE
 ).to(device)
@@ -120,9 +111,6 @@ for epoch in range(num_epochs):
         text = batch["text"][0]
         audio = batch["audio"][0]
         sample_rate = batch["sample_rate"][0]
-        video_path = batch["video_path"][0]
-        start_time = batch["start_time"][0]
-        end_time = batch["end_time"][0]
 
         target = batch["pad"].to(device)
 
@@ -133,22 +121,18 @@ for epoch in range(num_epochs):
 
         text_feats = extract_text_features(text)
         audio_feats = extract_audio_features(audio, sample_rate)
-        video_feats = extract_video_features(video_path, start_time, end_time)
 
         text_feats = torch.as_tensor(text_feats, dtype=torch.float32, device=device)
         audio_feats = torch.as_tensor(audio_feats, dtype=torch.float32, device=device)
-        video_feats = torch.as_tensor(video_feats, dtype=torch.float32, device=device)
 
         if text_feats.dim() == 2:
             text_feats = text_feats.unsqueeze(0)
         if audio_feats.dim() == 2:
             audio_feats = audio_feats.unsqueeze(0)
-        if video_feats.dim() == 2:
-            video_feats = video_feats.unsqueeze(0)
 
         optimizer.zero_grad()
 
-        pred = model(text_feats, audio_feats, video_feats)
+        pred = model(text_feats, audio_feats)
 
         SmoothL1Loss = loss_fn(pred, target).mean(dim=1)
         loss = SmoothL1Loss.mean()
@@ -183,7 +167,7 @@ for epoch in range(num_epochs):
         best_val_ccc = val_ccc
         epochs_without_improvement = 0
 
-        save_path = os.path.join("saved_models", f"best_meld_tav_{FUSION_TYPE}.pth")
+        save_path = os.path.join("saved_models", f"best_meld_ta_{FUSION_TYPE}.pth")
         torch.save(model.state_dict(), save_path)
 
         print(f"Saved new best model (VAL CCC = {best_val_ccc:.4f})")
