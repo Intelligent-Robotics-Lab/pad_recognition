@@ -10,21 +10,21 @@ from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
 from features.video_features import extract_video_features
 
-from models.emotion_model_text_audio import EmotionaPADModel
+from models.emotion_model import EmotionPADModel
 
 from utils.dataloaders import get_iemocap_loaders
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Valid inputs "mlp" and "transformer"
-FUSION_TYPE = "mlp"
+FUSION_TYPE = "transformer"
 
 SEED = 42
 
 torch.manual_seed(SEED)
 
-# Build the same text-audio model used during training
-model = EmotionaPADModel(text_input_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
+# Build the same multimodal model used during training
+model = EmotionPADModel(text_hidden_dim=1024, audio_input_dim=1024, video_input_dim=1280, d_model=512, fusion_type=FUSION_TYPE).to(device)
 
 # Evaluation metrics
 def rmse(y_true, y_pred):
@@ -49,7 +49,7 @@ def ccc(y_true, y_pred):
 
 def evaluate_fold(fold):
 
-    checkpoint = f"saved_models/best_tav_{FUSION_TYPE}_loso_fold{fold}"
+    checkpoint = f"saved_models/best_tav_{FUSION_TYPE}_loso_fold{fold}.pth"
 
     if not os.path.exists(checkpoint):
         print(f"Skipping Fold {fold}")
@@ -105,8 +105,7 @@ def evaluate_fold(fold):
             pred = model(text_feats, audio_feats, video_feats)
 
             predictions.append(pred.squeeze(0).cpu().numpy())
-            # Verify if squeeze and cpu is needed for the target as well
-            targets.append(target.squeeze(0).cpu().numpy())
+            targets.append(target)
 
     return np.array(predictions), np.array(targets)
 
@@ -137,7 +136,7 @@ for fold in range(1,6):
         score = ccc(y_true, y_pred)
         ccc_scores.append(score)
 
-        print(f"\n{dim})
+        print(f"\n{dim}")
         print(f"CCC      : {score:.4f}")
         print(f"Pearson  : {pearson(y_true, y_pred):.4f}")
         print(f"RMSE     : {rmse(y_true, y_pred):.4f}")
@@ -160,4 +159,4 @@ for i, score in enumerate(fold_results, start=1):
 print(f"\nPleasure CCC: {np.mean(pleasure_results):.4f}")
 print(f"\nArousal CCC: {np.mean(arousal_results):.4f}")
 print(f"\nDominance CCC: {np.mean(dominance_results):.4f}")
-print(f"Average CCC : {np.mean(ccc_scores):.4f}")
+print(f"Average CCC : {np.mean(fold_results):.4f}")

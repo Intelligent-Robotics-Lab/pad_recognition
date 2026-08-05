@@ -17,7 +17,7 @@ from models.single_modality_model import SingleModalityModel
 
 from utils.dataloaders import get_iemocap_loaders
 
-MODALITY = "text"
+MODALITY = "video"
 
 SEED = 42
 USE_GRU = False
