@@ -15,7 +15,7 @@ from utils.dataloaders import get_iemocap_loaders
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Valid inputs "mlp" and "transformer"
-FUSION_TYPE = "mlp"
+FUSION_TYPE = "transformer"
 
 SEED = 42
 
@@ -47,7 +47,7 @@ def ccc(y_true, y_pred):
 
 def evaluate_fold(fold):
 
-    checkpoint = f"saved_models/best_ta_{FUSION_TYPE}_loso_fold{fold}"
+    checkpoint = f"saved_models/best_ta_{FUSION_TYPE}_loso_fold{fold}.pth"
 
     if not os.path.exists(checkpoint):
         print(f"Skipping Fold {fold}")
@@ -95,7 +95,7 @@ def evaluate_fold(fold):
             pred = model(text_feats, audio_feats)
 
             predictions.append(pred.squeeze(0).cpu().numpy())
-            targets.append(target.squeeze(0).cpu().numpy())
+            targets.append(target)
 
     return np.array(predictions), np.array(targets)
 
@@ -150,4 +150,4 @@ for i, score in enumerate(fold_results, start=1):
 print(f"\nPleasure CCC: {np.mean(pleasure_results):.4f}")
 print(f"\nArousal CCC: {np.mean(arousal_results):.4f}")
 print(f"\nDominance CCC: {np.mean(dominance_results):.4f}")
-print(f"Average CCC : {np.mean(ccc_scores):.4f}")
+print(f"Average CCC : {np.mean(fold_results):.4f}")
