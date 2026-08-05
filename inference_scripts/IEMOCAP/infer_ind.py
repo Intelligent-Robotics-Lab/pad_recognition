@@ -17,7 +17,7 @@ from models.single_modality_model import SingleModalityModel
 
 from utils.dataloaders import get_iemocap_loaders
 
-MODALITY = "video"
+MODALITY = os.environ.get("PAD_MODALITY", "video")
 
 SEED = 42
 USE_GRU = False

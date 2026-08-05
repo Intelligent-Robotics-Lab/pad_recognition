@@ -19,7 +19,7 @@ from utils.dataloaders import get_meld_loaders
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MODALITY = "audio"
+MODALITY = os.environ.get("PAD_MODALITY", "audio")
 
 num_epochs = 50
 learning_rate = 1e-4

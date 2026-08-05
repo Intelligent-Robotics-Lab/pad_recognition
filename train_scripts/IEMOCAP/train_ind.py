@@ -22,7 +22,7 @@ from utils.dataloaders import get_iemocap_loaders
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MODALITY = "video"
+MODALITY = os.environ.get("PAD_MODALITY", "video")
 
 num_epochs = 50
 learning_rate = 1e-4

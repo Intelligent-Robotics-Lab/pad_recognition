@@ -19,7 +19,7 @@ from models.single_modality_model import SingleModalityModel
 
 from utils.dataloaders import get_meld_loaders
 
-MODALITY = "audio"
+MODALITY = os.environ.get("PAD_MODALITY", "audio")
 
 SEED = 42
 
