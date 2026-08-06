@@ -88,10 +88,14 @@ Two-stage pipeline, not end-to-end from scratch:
    `saved_models/best_{modality}_loso_fold{N}.pth`.
 2. **Fusion training** (`train_ta.py` for text+audio, `train_multimodal.py` for
    text+audio+video) — loads pretrained encoder weights, **freezes them**, and trains only
-   the fusion module + regression heads. Currently loads a single fixed checkpoint
-   (`saved_models/best_{modality}_model_raw.pth`) for every fold rather than the
-   fold-specific one `train_ind.py` now produces — see `docs/project_state.md` for why
-   that's flagged as a possible LOSO leakage risk, not yet resolved.
+   the fusion module + regression heads. Loads the fold-matched checkpoint
+   (`saved_models/best_{modality}_loso_fold{N}.pth`) for the fold currently being trained,
+   not a single fixed checkpoint — this closes a previous LOSO leak risk where a frozen
+   encoder could have already seen the held-out test session during its own pretraining.
+
+Both stages, plus their matching inference scripts, can be run through the single entry
+points `train_main.py` / `infer_main.py` at the repo root instead of remembering file paths
+— see the main `README.md`.
 
 **Evaluation protocol:** Leave-One-Subject-Out (LOSO) cross-validation
 (`utils/split.py`) — one IEMOCAP session (1-5) held out entirely as test per fold, remaining
@@ -126,18 +130,17 @@ Current limitations:
   clean data).
 - No modeling of conversational context beyond a single turn.
 - Feature extraction is not cached, so training/inference cost scales with dataset size on
-  every pass rather than being paid once.
-- MELD support exists as scaffolding but is not currently functional (model API mismatches,
-  incompatible video feature dimensionality vs. IEMOCAP) — single-dataset only for now.
-- The fusion-stage frozen-encoder / LOSO-fold mismatch noted in Section 8 is an open
-  methodological question, not just an implementation detail.
+  every pass rather than being paid once — a real, currently-unoptimized cost (RoBERTa-large/
+  HuBERT-large/MTCNN+HSEmotion all run per sample, every epoch).
+- MELD support is structurally aligned with IEMOCAP (same feature extractors, same training/
+  inference mechanics) but has not had a real training run yet — no MELD checkpoints exist,
+  so no MELD results can be reported. Not scaffolding/broken, just untrained.
 
 Potential improvements:
-- Resolve the frozen-encoder/fold mismatch (load per-fold pretrained encoders in the fusion
-  stage instead of a fixed checkpoint)
-- Cache extracted features instead of recomputing per epoch
-- Add MELD as a genuine second dataset (would require aligning video feature dimensionality
-  and fixing the model API calls)
+- Cache extracted features instead of recomputing per epoch (video — MTCNN face detection +
+  HSEmotion — is the most likely bottleneck, being per-frame rather than per-utterance)
+- Run real MELD training now that the pipeline mirrors IEMOCAP's, to get an actual
+  cross-dataset comparison point
 - Extend beyond single-turn context to model dialogue history
 - Investigate whether attention-pooling weights are behaving as intended — there's an open,
   unresolved investigation into this in the encoder code as of 2026-07-31 (see

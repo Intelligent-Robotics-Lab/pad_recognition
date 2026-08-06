@@ -18,7 +18,7 @@ DATASET = "IEMOCAP"
 MODE = "ind"
 
 # Only used when MODE == "ind". Options: "text", "audio", "video"
-MODALITY = "text"
+MODALITY = "video"
 
 SCRIPTS = {
     ("IEMOCAP", "ind"): "train_scripts/IEMOCAP/train_ind.py",
