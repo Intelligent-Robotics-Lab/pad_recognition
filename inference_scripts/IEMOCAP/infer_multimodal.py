@@ -16,7 +16,7 @@ from utils.dataloaders import get_iemocap_loaders
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Valid inputs "mlp" and "transformer"
-FUSION_TYPE = "transformer"
+FUSION_TYPE = os.environ.get("PAD_FUSION_TYPE", "transformer")
 
 SEED = 42
 
