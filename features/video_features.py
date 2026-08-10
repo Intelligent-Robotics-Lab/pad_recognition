@@ -22,7 +22,8 @@ fer = HSEmotionRecognizer(
 )
 
 
-def extract_video_features(video_path, start_time, end_time, frame_skip=5):
+def extract_video_features(video_path, start_time, end_time, frame_skip=3):
+    # frame_skip=3 ~= 10 FPS on IEMOCAP's ~30 FPS source video
 
     cap = cv2.VideoCapture(str(video_path))
 

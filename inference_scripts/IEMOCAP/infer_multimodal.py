@@ -8,7 +8,6 @@ import torch
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from features.video_features import extract_video_features
 
 from models.emotion_model import EmotionPADModel
 
@@ -78,19 +77,16 @@ def evaluate_fold(fold):
             text = batch["text"][0]
             audio = batch["audio"][0]
             sample_rate = batch["sample_rate"][0]
-            video_path = batch["video_path"][0]
-            start_time = batch["start_time"][0]
-            end_time = batch["end_time"][0]
 
             target = batch["pad"].squeeze(0).cpu().numpy()
 
             text_feats = extract_text_features(text)
             audio_feats = extract_audio_features(audio, sample_rate)
-            video_feats = extract_video_features(video_path, start_time, end_time)
+            video_feats = batch["video_feats"][0]
 
-            text_feats = torch.tensor(text_feats, dtype=torch.float32, device=device,)
-            audio_feats = torch.tensor(audio_feats, dtype=torch.float32, device=device,)
-            video_feats = torch.tensor(video_feats, dtype=torch.float32, device=device)
+            text_feats = torch.as_tensor(text_feats, dtype=torch.float32, device=device,)
+            audio_feats = torch.as_tensor(audio_feats, dtype=torch.float32, device=device,)
+            video_feats = torch.as_tensor(video_feats, dtype=torch.float32, device=device)
 
             # Match training script dimensions
             if text_feats.dim() == 2:
