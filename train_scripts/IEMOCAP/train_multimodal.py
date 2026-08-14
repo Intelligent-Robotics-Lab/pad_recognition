@@ -148,13 +148,6 @@ def train_fold(fold):
     for param in model.video_encoder.parameters():
         param.requires_grad = False
 
-    # Verify which layers are updating (optional print)
-    print("\nTrainable Paramters:")
-
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(name)
-
     # Only optimize trainable parameters
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
     loss_fn = nn.SmoothL1Loss(reduction="none")
@@ -189,12 +182,6 @@ def train_fold(fold):
             sample_rate = batch["sample_rate"][0]
 
             target = batch["pad"].to(device)
-
-            # Print the first sample as a sanity check
-            if epoch == 0 and i == 0:
-                print("First sample")
-                print("Text:", text)
-                print("Target:", target)
 
             text_feats = extract_text_features(text)
             audio_feats = extract_audio_features(audio, sample_rate)
@@ -233,21 +220,6 @@ def train_fold(fold):
 
             running_loss += loss.item()
 
-            # Print to inspect predictions during training
-            if i % 200 == 0:
-                print(f"\nSample {i}")
-
-                print("Pred:", pred.detach().cpu())
-                print("Target:", target.detach().cpu())
-
-                print("Pred PAD mean:", pred.mean(dim=1).item())
-                print("Target PAD mean:", target.mean(dim=1).item())
-
-                print("Pred PAD std:", pred.squeeze(0).std().item())
-                print("Target PAD std:", target.squeeze(0).std().item())
-
-                print("Loss:", loss.item())
-
         avg_loss = running_loss / len(train_loader)
         print(f"\nEpoch {epoch+1} Train MSE: {avg_loss:.4f}")
 
@@ -277,7 +249,7 @@ def train_fold(fold):
                 print("\nEarly stopping triggered.")
                 break
 
-    print("\nFold {fold} complete.")
+    print(f"\nFold {fold} complete.")
     print(f"Best validation CCC: {best_val_ccc:.4f}")
 
     return best_val_ccc

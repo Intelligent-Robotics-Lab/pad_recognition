@@ -15,13 +15,13 @@ import sys
 DATASET = "IEMOCAP"
 
 # Options: "ind", "ta", "multimodal"
-MODE = "ta"
+MODE = "multimodal"
 
 # Only used when MODE == "ind". Options: "text", "audio", "video"
 MODALITY = "video"
 
 # Only used when MODE == "ta" or "multimodal". Options: "mlp", "transformer"
-FUSION_TYPE = "mlp"
+FUSION_TYPE = "transformer"
 
 SCRIPTS = {
     ("IEMOCAP", "ind"): "train_scripts/IEMOCAP/train_ind.py",
