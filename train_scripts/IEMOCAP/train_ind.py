@@ -10,7 +10,6 @@ import torch.optim as optim
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from features.video_features import extract_video_features
 
 from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder, VideoProjectionEncoder)
 
@@ -60,9 +59,6 @@ def evaluate(model, loader, name="VAL"):
 
         text = batch["text"][0]
         audio = batch["audio"][0]
-        video_path = batch["video_path"][0]
-        start_time = batch["start_time"][0]
-        end_time = batch["end_time"][0]
 
         target = batch["pad"].to(device)
 
@@ -74,9 +70,9 @@ def evaluate(model, loader, name="VAL"):
             feats = extract_audio_features(audio, sample_rate)
 
         elif MODALITY == "video":
-            feats = extract_video_features(video_path, start_time, end_time)
+            feats = batch["video_feats"][0]
 
-        feats = torch.tensor(feats, dtype=torch.float32, device=device)
+        feats = torch.as_tensor(feats, dtype=torch.float32, device=device)
 
         if feats.dim() == 2:
             feats = feats.unsqueeze(0)
@@ -155,9 +151,6 @@ def train_fold(fold):
         for i, batch in enumerate(train_loader):
             text = batch["text"][0]
             audio = batch["audio"][0]
-            video_path = batch["video_path"][0]
-            start_time = batch["start_time"][0]
-            end_time = batch["end_time"][0]
             target = batch["pad"].to(device)
 
             if epoch == 0 and i == 0:
@@ -171,7 +164,7 @@ def train_fold(fold):
                     print("Audio length:", len(audio))
                 
                 elif MODALITY == "video":
-                    print("Video:", video_path)
+                    print("Video feats shape:", batch["video_feats"][0].shape)
 
             if MODALITY == "text":
                 feats = extract_text_features(text)
@@ -181,9 +174,9 @@ def train_fold(fold):
                 feats = extract_audio_features(audio, sample_rate)
 
             elif MODALITY == "video":
-                feats = extract_video_features(video_path, start_time, end_time)
+                feats = batch["video_feats"][0]
 
-            feats = torch.tensor(feats, dtype=torch.float32, device=device)
+            feats = torch.as_tensor(feats, dtype=torch.float32, device=device)
 
             # Depends on the extractor but just a precaution
             if feats.dim() == 2:

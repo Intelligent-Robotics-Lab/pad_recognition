@@ -15,10 +15,13 @@ import sys
 DATASET = "IEMOCAP"
 
 # Options: "ind", "ta", "multimodal"
-MODE = "ind"
+MODE = "ta"
 
 # Only used when MODE == "ind". Options: "text", "audio", "video"
 MODALITY = "video"
+
+# Only used when MODE == "ta" or "multimodal". Options: "mlp", "transformer"
+FUSION_TYPE = "mlp"
 
 SCRIPTS = {
     ("IEMOCAP", "ind"): "train_scripts/IEMOCAP/train_ind.py",
@@ -46,6 +49,9 @@ if __name__ == "__main__":
     if MODE == "ind":
         env["PAD_MODALITY"] = MODALITY
         log_suffix = f", MODALITY={MODALITY}"
+    elif MODE in ("ta", "multimodal"):
+        env["PAD_FUSION_TYPE"] = FUSION_TYPE
+        log_suffix = f", FUSION_TYPE={FUSION_TYPE}"
 
     print(f"Running {script} (DATASET={DATASET}, MODE={MODE}{log_suffix})")
     subprocess.run([sys.executable, script], env=env, cwd=repo_root, check=True)

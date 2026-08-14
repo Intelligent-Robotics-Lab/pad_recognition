@@ -8,7 +8,6 @@ import torch
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from features.video_features import extract_video_features
 
 from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder, VideoProjectionEncoder)
 from models.pad_regressor import PADRegressors
@@ -94,23 +93,20 @@ def evaluate_fold(fold):
 
             text = batch["text"][0]
             audio = batch["audio"][0]
-            video_path = batch["video_path"][0]
-            start_time = batch["start_time"][0]
-            end_time = batch["end_time"][0]
 
             target = batch["pad"].to(device)
 
             if MODALITY == "text":
                 feats = extract_text_features(text)
-            
+
             elif MODALITY == "audio":
                 sample_rate = batch["sample_rate"][0]
                 feats = extract_audio_features(audio, sample_rate)
 
             elif MODALITY == "video":
-                feats = extract_video_features(video_path, start_time, end_time)
-            
-            feats = torch.tensor(feats, dtype=torch.float32, device=device)
+                feats = batch["video_feats"][0]
+
+            feats = torch.as_tensor(feats, dtype=torch.float32, device=device)
 
             if feats.dim() == 2:
                 feats = feats.unsqueeze(0)
