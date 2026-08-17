@@ -5,8 +5,9 @@ class PADRegressors(nn.Module):
     def __init__(self, d_model=512, hidden_dim=None):
         super().__init__()
 
-        if hidden_dim is None: 
+        if hidden_dim is None:
             # Simple linear heads
+            self.shared = nn.Identity()
             self.pleasure_head = nn.Linear(d_model, 1)
             self.arousal_head  = nn.Linear(d_model, 1)
             self.dominance_head = nn.Linear(d_model, 1)

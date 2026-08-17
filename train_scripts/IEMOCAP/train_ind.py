@@ -1,5 +1,5 @@
 """
-Train script for individual modalities (text and audio) using the IEMOCAP dataset
+Train script for individual modalities (text, audio, and video) using the IEMOCAP dataset
 """
 
 import os
@@ -10,7 +10,6 @@ import torch.optim as optim
 
 from features.text_features import extract_text_features
 from features.audio_features import extract_audio_features
-from features.video_features import extract_video_features
 
 from models.encoders import (TextTransformerEncoder, AudioProjectionEncoder, VideoProjectionEncoder)
 
@@ -22,7 +21,7 @@ from utils.dataloaders import get_iemocap_loaders
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MODALITY = "video"
+MODALITY = os.environ.get("PAD_MODALITY", "video")
 
 num_epochs = 50
 learning_rate = 1e-4
@@ -32,25 +31,6 @@ seed = 42
 torch.manual_seed(seed)
 
 print(f"Training single-modality PAD regressor on {MODALITY} features")
-
-if MODALITY == "text":
-    encoder = TextTransformerEncoder(hidden_dim=1024, d_model=512,)
-
-elif MODALITY == "audio":
-    encoder = AudioProjectionEncoder(input_dim=1024, d_model=512,)
-
-elif MODALITY == "video":
-    encoder = VideoProjectionEncoder(input_dim=1280, d_model=512)
-
-else:
-    raise ValueError("Only text, audio, and video are currently supported.")
-
-regressor = PADRegressors(d_model=512, hidden_dim=256,)
-
-model = SingleModalityModel(encoder=encoder, pad_regressor=regressor).to(device)
-
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-loss_fn = nn.SmoothL1Loss(reduction="none")
 
 # CCCs for evaluation only
 @torch.no_grad()
@@ -66,18 +46,6 @@ def ccc_score(pred, target):
     ccc = (2 * cov) / (pred_var + target_var + (pred_mean - target_mean).pow(2) + 1e-8)
     return ccc, ccc.mean().item()
 
-# Load in the data
-train_loader, val_loader, test_loader = get_iemocap_loaders(
-    "data/iemocap.csv",
-    batch_size=1
-)
-
-# Sanity check to confirm the splits
-print(
-    f"Train: {len(train_loader.dataset)} | "
-    f"Val: {len(val_loader.dataset)} | "
-    f"Test: {len(test_loader.dataset)}"
-)
 
 # Evaluate function (CCCs)
 @torch.no_grad()
@@ -88,13 +56,9 @@ def evaluate(model, loader, name="VAL"):
     targets_all = []
 
     for batch in loader:
-        print("Validation sample")
 
         text = batch["text"][0]
         audio = batch["audio"][0]
-        video_path = batch["video_path"][0]
-        start_time = batch["start_time"][0]
-        end_time = batch["end_time"][0]
 
         target = batch["pad"].to(device)
 
@@ -106,9 +70,9 @@ def evaluate(model, loader, name="VAL"):
             feats = extract_audio_features(audio, sample_rate)
 
         elif MODALITY == "video":
-            feats = extract_video_features(video_path, start_time, end_time)
+            feats = batch["video_feats"][0]
 
-        feats = torch.tensor(feats, dtype=torch.float32, device=device)
+        feats = torch.as_tensor(feats, dtype=torch.float32, device=device)
 
         if feats.dim() == 2:
             feats = feats.unsqueeze(0)
@@ -118,8 +82,6 @@ def evaluate(model, loader, name="VAL"):
         preds_all.append(pred)
         targets_all.append(target)
 
-    print("Predictions collected:", len(preds_all))
-    print("Targets collected:", len(targets_all))
     preds_all = torch.cat(preds_all)
     targets_all = torch.cat(targets_all)
 
@@ -137,107 +99,129 @@ def evaluate(model, loader, name="VAL"):
 
     return avg
 
-best_val_ccc = -float("inf")
-os.makedirs("saved_models", exist_ok=True)
+def train_fold(fold):
 
-# Early stopping variables
-patience = 3
-epochs_without_improvement = 0
+    print(f"Training {MODALITY.upper()} | LOSO Fold {fold}")
 
-for epoch in range(num_epochs):
-    print(f"\nEpoch {epoch + 1}/{num_epochs}")
-    running_loss = 0.0
+    if MODALITY == "text":
+        encoder = TextTransformerEncoder(hidden_dim=1024, d_model=512,)
 
-    for i, batch in enumerate(train_loader):
-        text = batch["text"][0]
-        audio = batch["audio"][0]
-        video_path = batch["video_path"][0]
-        start_time = batch["start_time"][0]
-        end_time = batch["end_time"][0]
-        target = batch["pad"].to(device)
+    elif MODALITY == "audio":
+        encoder = AudioProjectionEncoder(input_dim=1024, d_model=512,)
 
-        if epoch == 0 and i == 0:
-            print("First sample")
-            print("Target:", target)
-
-            if MODALITY == "text":
-                print("Text:", text)
-
-            elif MODALITY == "audio":
-                print("Audio length:", len(audio))
-            
-            elif MODALITY == "video":
-                print("Video:", video_path)
-
-        if MODALITY == "text":
-            feats = extract_text_features(text)
-
-        elif MODALITY == "audio":
-            sample_rate = batch["sample_rate"][0]
-            feats = extract_audio_features(audio, sample_rate)
-
-        elif MODALITY == "video":
-            feats = extract_video_features(video_path, start_time, end_time)
-
-        feats = torch.tensor(feats, dtype=torch.float32, device=device)
-
-        # Depends on the extractor but just a precaution
-        if feats.dim() == 2:
-            feats = feats.unsqueeze(0)
-
-        optimizer.zero_grad()
-        pred = model(feats)
-
-        SmoothL1Loss = loss_fn(pred, target).mean(dim=1)
-        loss = SmoothL1Loss.mean()
-
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        torch.nn.utils.clip_grad_value_(model.parameters(), 1.0)
-        optimizer.step()
-
-        running_loss += loss.item()
-
-        if i % 10 == 0:
-            print(f"\nSample {i}")
-
-            print("Pred:", pred.detach().cpu())
-            print("Target:", target.detach().cpu())
-
-            print("Pred PAD mean:", pred.mean(dim=1).item())
-            print("Target PAD mean:", target.mean(dim=1).item())
-
-            print("Pred PAD std:", pred.squeeze(0).std().item())
-            print("Target PAD std:", target.squeeze(0).std().item())
-
-            print("Loss:", loss.item())
-
-    avg_loss = running_loss / len(train_loader)
-    print(f"\nEpoch {epoch + 1} Train Loss: {avg_loss:.4f}")
-
-    val_ccc = evaluate(model, val_loader, "VAL")
-
-    min_delta = 1e-3
-
-    if val_ccc > best_val_ccc + min_delta:
-        best_val_ccc = val_ccc
-        epochs_without_improvement = 0
-
-        save_path = os.path.join("saved_models", f"best_{MODALITY}_model_raw.pth")
-        torch.save(model.state_dict(), save_path)
-        
-        print(
-            f"Saved new best model "
-            f"(VAL CCC = {best_val_ccc:.4f})"
-        )
+    elif MODALITY == "video":
+        encoder = VideoProjectionEncoder(input_dim=1280, d_model=512)
 
     else:
-        epochs_without_improvement += 1
-        print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
+        raise ValueError("Only text, audio, and video are currently supported.")
 
-        if epochs_without_improvement >= patience:
-            print("\nEarly stopping triggered")
-            break
+    regressor = PADRegressors(d_model=512, hidden_dim=256,)
 
-print("Training complete.")
-print(f"Best validation CCC: {best_val_ccc:.4f}")
+    model = SingleModalityModel(encoder=encoder, pad_regressor=regressor).to(device)
+
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    loss_fn = nn.SmoothL1Loss(reduction="none")
+
+    train_loader, val_loader, test_loader = get_iemocap_loaders(
+        "data/iemocap.csv",
+        batch_size=1,
+        split="loso",
+        fold=fold,
+    )
+
+    print(
+        f"Train: {len(train_loader.dataset)} | "
+        f"Val: {len(val_loader.dataset)} | "
+        f"Test: {len(test_loader.dataset)} | "
+    )
+
+    best_val_ccc = -float("inf")
+    os.makedirs("saved_models", exist_ok=True)
+
+    # Early stopping variables
+    patience = 5
+    epochs_without_improvement = 0
+
+    for epoch in range(num_epochs):
+        print(f"\nEpoch {epoch + 1}/{num_epochs}")
+        running_loss = 0.0
+
+        for i, batch in enumerate(train_loader):
+            text = batch["text"][0]
+            audio = batch["audio"][0]
+            target = batch["pad"].to(device)
+
+            if MODALITY == "text":
+                feats = extract_text_features(text)
+
+            elif MODALITY == "audio":
+                sample_rate = batch["sample_rate"][0]
+                feats = extract_audio_features(audio, sample_rate)
+
+            elif MODALITY == "video":
+                feats = batch["video_feats"][0]
+
+            feats = torch.as_tensor(feats, dtype=torch.float32, device=device)
+
+            # Depends on the extractor but just a precaution
+            if feats.dim() == 2:
+                feats = feats.unsqueeze(0)
+
+            optimizer.zero_grad()
+            pred = model(feats)
+
+            SmoothL1Loss = loss_fn(pred, target).mean(dim=1)
+            loss = SmoothL1Loss.mean()
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_value_(model.parameters(), 1.0)
+            optimizer.step()
+
+            running_loss += loss.item()
+
+        avg_loss = running_loss / len(train_loader)
+        print(f"\nEpoch {epoch + 1} Train Loss: {avg_loss:.4f}")
+
+        val_ccc = evaluate(model, val_loader, "VAL")
+
+        min_delta = 1e-3
+
+        if val_ccc > best_val_ccc + min_delta:
+            best_val_ccc = val_ccc
+            epochs_without_improvement = 0
+
+            save_path = os.path.join("saved_models", f"best_{MODALITY}_loso_fold{fold}.pth")
+            torch.save(model.state_dict(), save_path)
+            
+            print(
+                f"Saved new best model "
+                f"(VAL CCC = {best_val_ccc:.4f})"
+            )
+
+        else:
+            epochs_without_improvement += 1
+            print(f"No improvements for {epochs_without_improvement}/{patience} epochs.")
+
+            if epochs_without_improvement >= patience:
+                print("\nEarly stopping triggered")
+                break
+
+    print(f"\nFold {fold} complete.")
+    print(f"Best validation CCC: {best_val_ccc:.4f}")
+
+    return best_val_ccc
+
+results = {}
+
+for fold in range(1, 6):
+    results[fold] = train_fold(fold)
+
+print("\nFinal LOSO Validation Results")
+
+for fold, score in results.items():
+    print(f"Fold {fold}: {score:.4f}")
+
+mean_ccc = sum(results.values()) / len(results)
+
+print(f"\nMean Validation CCC: {mean_ccc:.4f}")

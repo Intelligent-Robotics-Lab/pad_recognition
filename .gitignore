@@ -8,6 +8,10 @@ __pycache__/
 data/
 saved_models/
 
+# Claude docs folder and .md files
+docs/
+CLAUDE.md
+
 # Model files
 *.pth
 *.pt
